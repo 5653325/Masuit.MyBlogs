@@ -1,5 +1,5 @@
 ﻿@using System.Text.RegularExpressions
-@using Common
+@using Masuit.MyBlogs.Core.Common
 @model Masuit.MyBlogs.Core.Models.Entity.Misc
 @{
     ViewBag.Title = Model.Title;
@@ -38,7 +38,7 @@
     }
 </style>
 <ol class="cd-breadcrumb triangle">
-    <li>@Html.ActionLink("首页", "Index", "Home")</li>
+    <li><a asp-controller="Home" asp-action="Index">首页</a></li>
     <li class="current">
         <em>@ViewBag.Title</em>
     </li>
@@ -53,50 +53,8 @@
 </div>
 <div class="container">
     <article class="content">
-        @Html.Raw(Regex.Replace(Model.Content, @"<img\s+[^>]*\s*src\s*=\s*['""]?(\S+\.\w{3,4})['""]?[^/>]*/>", $"<img data-original=\"$1\" alt='{CommonHelper.SystemSettings["Title"]}' title='{CommonHelper.SystemSettings["Title"]}'/>"))
+        @Html.Raw(Model.Content.ReplaceImgAttribute(Model.Title))
     </article>
-    <!--PC和WAP自适应版-->
-    <div id="SOHUCS" sid="misc-@Model.Id"></div>
-    <script type="text/javascript">
-        (function () {
-            var appid = 'cytsT3QgK';
-            var conf = 'prod_0358240040a6c9611add9de991099d42';
-            var width = window.innerWidth || document.documentElement.clientWidth;
-            if (width < 960) {
-                window.document.write(
-                    '<script id="changyan_mobile_js" charset="utf-8" type="text/javascript" src="https://changyan.sohu.com/upload/mobile/wap-js/changyan_mobile.js?client_id=' +
-                    appid + '&conf=' + conf + '"><\/script>');
-            } else {
-                var loadJs = function (d, a) {
-                    var c = document.getElementsByTagName("head")[0] || document.head || document.documentElement;
-                    var b = document.createElement("script");
-                    b.setAttribute("type", "text/javascript");
-                    b.setAttribute("charset", "UTF-8");
-                    b.setAttribute("src", d);
-                    if (typeof a === "function") {
-                        if (window.attachEvent) {
-                            b.onreadystatechange = function () {
-                                var e = b.readyState;
-                                if (e === "loaded" || e === "complete") {
-                                    b.onreadystatechange = null;
-                                    a();
-                                }
-                            }
-                        } else {
-                            b.onload = a;
-                        }
-                    }
-                    c.appendChild(b);
-                };
-                loadJs("https://changyan.sohu.com/upload/changyan.js", function () {
-                    window.changyan.api.config({
-                        appid: appid,
-                        conf: conf
-                    });
-                });
-            }
-        })();
-    </script>
 </div>
 <script src="~/Assets/UEditor/third-party/SyntaxHighlighter/scripts/shCore.min.js"></script>
 <script src="~/Assets/UEditor/third-party/SyntaxHighlighter/scripts/bundle.min.js"></script>

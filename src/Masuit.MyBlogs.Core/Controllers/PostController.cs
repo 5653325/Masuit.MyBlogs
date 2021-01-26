@@ -1,33 +1,39 @@
-﻿using AutoMapper;
-using Common;
-using EFSecondLevelCache.Core;
-using Hangfire;
+﻿using Hangfire;
 using Masuit.LuceneEFCore.SearchEngine.Interfaces;
 using Masuit.MyBlogs.Core.Common;
 using Masuit.MyBlogs.Core.Configs;
 using Masuit.MyBlogs.Core.Extensions;
+using Masuit.MyBlogs.Core.Extensions.Firewall;
 using Masuit.MyBlogs.Core.Extensions.Hangfire;
-using Masuit.MyBlogs.Core.Infrastructure.Application;
+using Masuit.MyBlogs.Core.Infrastructure;
+using Masuit.MyBlogs.Core.Infrastructure.Repository;
 using Masuit.MyBlogs.Core.Infrastructure.Services.Interface;
+using Masuit.MyBlogs.Core.Models.Command;
 using Masuit.MyBlogs.Core.Models.DTO;
 using Masuit.MyBlogs.Core.Models.Entity;
 using Masuit.MyBlogs.Core.Models.Enum;
 using Masuit.MyBlogs.Core.Models.ViewModel;
 using Masuit.Tools;
-using Masuit.Tools.DateTimeExt;
+using Masuit.Tools.Core.Net;
 using Masuit.Tools.Html;
+using Masuit.Tools.Linq;
+using Masuit.Tools.Logging;
 using Masuit.Tools.Security;
+using Masuit.Tools.Strings;
 using Masuit.Tools.Systems;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.AspNetCore.Mvc.Rendering;
 using Microsoft.Net.Http.Headers;
 using System;
-using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations;
 using System.IO;
 using System.Linq;
+using System.Linq.Dynamic.Core;
+using System.Linq.Expressions;
 using System.Text.RegularExpressions;
-using Microsoft.AspNetCore.Http;
+using System.Threading.Tasks;
+using SameSiteMode = Microsoft.AspNetCore.Http.SameSiteMode;
 
 namespace Masuit.MyBlogs.Core.Controllers
 {
@@ -36,39 +42,16 @@ namespace Masuit.MyBlogs.Core.Controllers
     /// </summary>
     public class PostController : BaseController
     {
-        private IPostService PostService { get; set; }
-        private ICategoryService CategoryService { get; set; }
-        private IBroadcastService BroadcastService { get; set; }
-        private ISeminarService SeminarService { get; set; }
-
-        private readonly IHostingEnvironment _hostingEnvironment;
-        private readonly ISearchEngine<DataContext> _searchEngine;
-
-        /// <summary>
-        /// 
-        /// </summary>
+        public IPostService PostService { get; set; }
+        public ICategoryService CategoryService { get; set; }
+        public ISeminarService SeminarService { get; set; }
         public IPostHistoryVersionService PostHistoryVersionService { get; set; }
+        public IInternalMessageService MessageService { get; set; }
+        public IPostMergeRequestService PostMergeRequestService { get; set; }
 
-        /// <summary>
-        /// 文章管理
-        /// </summary>
-        /// <param name="postService"></param>
-        /// <param name="categoryService"></param>
-        /// <param name="broadcastService"></param>
-        /// <param name="seminarService"></param>
-        /// <param name="postHistoryVersionService"></param>
-        /// <param name="hostingEnvironment"></param>
-        /// <param name="searchEngine"></param>
-        public PostController(IPostService postService, ICategoryService categoryService, IBroadcastService broadcastService, ISeminarService seminarService, IPostHistoryVersionService postHistoryVersionService, IHostingEnvironment hostingEnvironment, ISearchEngine<DataContext> searchEngine)
-        {
-            PostService = postService;
-            CategoryService = categoryService;
-            BroadcastService = broadcastService;
-            SeminarService = seminarService;
-            PostHistoryVersionService = postHistoryVersionService;
-            _hostingEnvironment = hostingEnvironment;
-            _searchEngine = searchEngine;
-        }
+        public IWebHostEnvironment HostEnvironment { get; set; }
+        public ISearchEngine<DataContext> SearchEngine { get; set; }
+        public ImagebedClient ImagebedClient { get; set; }
 
         /// <summary>
         /// 文章详情页
@@ -76,41 +59,95 @@ namespace Masuit.MyBlogs.Core.Controllers
         /// <param name="id"></param>
         /// <param name="kw"></param>
         /// <returns></returns>
-        [Route("{id:int}/{kw}"), Route("{id:int}"), ResponseCache(Duration = 600, VaryByQueryKeys = new[] { "id", "kw" }, VaryByHeader = HeaderNames.Cookie)]
-        public ActionResult Details(int id, string kw)
+        [Route("{id:int}"), ResponseCache(Duration = 600, VaryByQueryKeys = new[] { "id" }, VaryByHeader = "Cookie")]
+        public async Task<ActionResult> Details(int id, string kw)
         {
-            Post post = PostService.GetById(id);
-            if (post != null)
+            var post = await PostService.GetAsync(p => p.Id == id && (p.Status == Status.Published || CurrentUser.IsAdmin)) ?? throw new NotFoundException("文章未找到");
+            CheckPermission(post);
+            ViewBag.Keyword = post.Keyword + "," + post.Label;
+            ViewBag.Desc = post.Content.GetSummary(200);
+            var modifyDate = post.ModifyDate;
+            ViewBag.Next = PostService.GetFromCache<DateTime, PostModelBase>(p => p.ModifyDate > modifyDate && (p.Status == Status.Published || CurrentUser.IsAdmin), p => p.ModifyDate);
+            ViewBag.Prev = PostService.GetFromCache<DateTime, PostModelBase>(p => p.ModifyDate < modifyDate && (p.Status == Status.Published || CurrentUser.IsAdmin), p => p.ModifyDate, false);
+            if (!string.IsNullOrEmpty(kw))
             {
-                ViewBag.Keyword = post.Keyword + "," + post.Label;
-                UserInfoOutputDto user = HttpContext.Session.GetByRedis<UserInfoOutputDto>(SessionKey.UserInfo) ?? new UserInfoOutputDto();
-                DateTime modifyDate = post.ModifyDate;
-                ViewBag.Next = PostService.GetFirstEntityNoTracking(p => p.ModifyDate > modifyDate && (p.Status == Status.Pended || user.IsAdmin), p => p.ModifyDate);
-                ViewBag.Prev = PostService.GetFirstEntityNoTracking(p => p.ModifyDate < modifyDate && (p.Status == Status.Pended || user.IsAdmin), p => p.ModifyDate, false);
-                if (!string.IsNullOrEmpty(kw))
-                {
-                    ViewData["keywords"] = post.Content.Contains(kw) ? $"['{kw}']" : _searchEngine.LuceneIndexSearcher.CutKeywords(kw).ToJsonString();
-                }
-                if (user.IsAdmin)
-                {
-                    return View("Details_Admin", post);
-                }
-
-                if (post.Status != Status.Pended)
-                {
-                    return RedirectToAction("Post", "Home");
-                }
-
-                if (!HttpContext.Request.IsRobot() && string.IsNullOrEmpty(HttpContext.Session.GetByRedis<string>("post" + id)))
-                {
-                    HangfireHelper.CreateJob(typeof(IHangfireBackJob), nameof(HangfireBackJob.RecordPostVisit), args: id);
-                    HttpContext.Session.SetByRedis("post" + id, id.ToString());
-                }
-
-                return View(post);
+                ViewData["keywords"] = post.Content.Contains(kw) ? $"['{kw}']" : SearchEngine.LuceneIndexSearcher.CutKeywords(kw).ToJsonString();
             }
 
-            return RedirectToAction("Index", "Error");
+            ViewBag.Ads = AdsService.GetByWeightedPrice(AdvertiseType.InPage, post.CategoryId);
+            var related = PostService.ScoreSearch(1, 11, string.IsNullOrWhiteSpace(post.Keyword + post.Label) ? post.Title : post.Keyword + post.Label);
+            related.RemoveAll(p => p.Id == id);
+            if (related.Count <= 1)
+            {
+                related = (await PostService.GetPagesFromCacheAsync(1, 10, p => p.Id != id && p.CategoryId == post.CategoryId, p => p.TotalViewCount, false)).Data;
+            }
+
+            ViewBag.Related = related;
+            post.ModifyDate = post.ModifyDate.ToTimeZone(HttpContext.Session.Get<string>(SessionKey.TimeZone));
+            post.PostDate = post.PostDate.ToTimeZone(HttpContext.Session.Get<string>(SessionKey.TimeZone));
+            post.Content = ReplaceVariables(post.Content);
+            post.ProtectContent = ReplaceVariables(post.ProtectContent);
+            if (CurrentUser.IsAdmin)
+            {
+                return View("Details_Admin", post);
+            }
+
+            if (!HttpContext.Request.IsRobot() && string.IsNullOrEmpty(HttpContext.Session.Get<string>("post" + id)))
+            {
+                HangfireHelper.CreateJob(typeof(IHangfireBackJob), nameof(HangfireBackJob.RecordPostVisit), args: id);
+                HttpContext.Session.Set("post" + id, id.ToString());
+            }
+
+            return View(post);
+        }
+
+        private void CheckPermission(Post post)
+        {
+            var location = Request.Location() + "|" + Request.Headers[HeaderNames.UserAgent];
+            switch (post.LimitMode)
+            {
+                case PostLimitMode.AllowRegion:
+                    if (!location.Contains(post.Regions.Split(',', StringSplitOptions.RemoveEmptyEntries)) && !CurrentUser.IsAdmin && !VisitorTokenValid && !Request.IsRobot())
+                    {
+                        Disallow(post);
+                    }
+
+                    break;
+                case PostLimitMode.ForbidRegion:
+                    if (location.Contains(post.Regions.Split(',', StringSplitOptions.RemoveEmptyEntries)) && !CurrentUser.IsAdmin && !VisitorTokenValid && !Request.IsRobot())
+                    {
+                        Disallow(post);
+                    }
+
+                    break;
+                case PostLimitMode.AllowRegionExceptForbidRegion:
+                    if (location.Contains(post.ExceptRegions.Split(',', StringSplitOptions.RemoveEmptyEntries)) && !CurrentUser.IsAdmin && !VisitorTokenValid)
+                    {
+                        Disallow(post);
+                    }
+
+                    goto case PostLimitMode.AllowRegion;
+                case PostLimitMode.ForbidRegionExceptAllowRegion:
+                    if (location.Contains(post.ExceptRegions.Split(',', StringSplitOptions.RemoveEmptyEntries)) && !CurrentUser.IsAdmin && !VisitorTokenValid)
+                    {
+                        break;
+                    }
+
+                    goto case PostLimitMode.ForbidRegion;
+            }
+        }
+
+        private void Disallow(Post post)
+        {
+            BackgroundJob.Enqueue(() => HangfireBackJob.InterceptLog(new IpIntercepter()
+            {
+                IP = ClientIP,
+                RequestUrl = $"//{Request.Host}/{post.Id}",
+                Time = DateTime.Now,
+                UserAgent = Request.Headers[HeaderNames.UserAgent],
+                Remark = "无权限查看该文章"
+            }));
+            throw new NotFoundException("文章未找到");
         }
 
         /// <summary>
@@ -120,28 +157,20 @@ namespace Masuit.MyBlogs.Core.Controllers
         /// <param name="page"></param>
         /// <param name="size"></param>
         /// <returns></returns>
-        [Route("{id:int}/history"), Route("{id:int}/history/{page:int}/{size:int}"), ResponseCache(Duration = 600, VaryByQueryKeys = new[] { "id", "page", "size" }, VaryByHeader = HeaderNames.Cookie)]
-        public ActionResult History(int id, int page = 1, int size = 20)
+        [Route("{id:int}/history"), ResponseCache(Duration = 600, VaryByQueryKeys = new[] { "id", "page", "size" }, VaryByHeader = "Cookie")]
+        public async Task<ActionResult> History(int id, [Range(1, int.MaxValue, ErrorMessage = "页码必须大于0")] int page = 1, [Range(1, 50, ErrorMessage = "页大小必须在0到50之间")] int size = 20)
         {
-            var p = PostService.GetById(id).Mapper<PostOutputDto>();
-            if (p != null)
+            var post = await PostService.GetAsync(p => p.Id == id && (p.Status == Status.Published || CurrentUser.IsAdmin)) ?? throw new NotFoundException("文章未找到");
+            CheckPermission(post);
+            ViewBag.Primary = post;
+            var list = PostHistoryVersionService.GetPages(page, size, v => v.PostId == id, v => v.ModifyDate, false);
+            foreach (var item in list.Data)
             {
-                ViewBag.Primary = p;
-                var list = PostHistoryVersionService.LoadPageEntitiesNoTracking(page, size, out int total, v => v.PostId == id, v => v.ModifyDate, false).Select(v => new PostHistoryVersion()
-                {
-                    PostId = id,
-                    Category = v.Category,
-                    ModifyDate = v.ModifyDate,
-                    Title = v.Title,
-                    Id = v.Id,
-                    CategoryId = v.CategoryId
-                }).Cacheable().ToList();
-                ViewBag.Total = total;
-                ViewBag.PageCount = Math.Ceiling(total * 1.0 / size).ToInt32();
-                return View(list);
+                item.ModifyDate = item.ModifyDate.ToTimeZone(HttpContext.Session.Get<string>(SessionKey.TimeZone));
             }
 
-            return RedirectToAction("Details", "Post", new { id });
+            ViewBag.Ads = AdsService.GetByWeightedPrice(AdvertiseType.InPage, post.CategoryId);
+            return View(list);
         }
 
         /// <summary>
@@ -150,27 +179,19 @@ namespace Masuit.MyBlogs.Core.Controllers
         /// <param name="id"></param>
         /// <param name="hid"></param>
         /// <returns></returns>
-        [Route("{id:int}/history/{hid:int}"), ResponseCache(Duration = 600, VaryByQueryKeys = new[] { "id", "hid" }, VaryByHeader = HeaderNames.Cookie)]
-        public ActionResult HistoryVersion(int id, int hid)
+        [Route("{id:int}/history/{hid:int}"), ResponseCache(Duration = 600, VaryByQueryKeys = new[] { "id", "hid" }, VaryByHeader = "Cookie")]
+        public async Task<ActionResult> HistoryVersion(int id, int hid)
         {
-            UserInfoOutputDto user = HttpContext.Session.GetByRedis<UserInfoOutputDto>(SessionKey.UserInfo) ?? new UserInfoOutputDto();
-            var post = PostHistoryVersionService.GetById(hid);
-            if (post is null)
-            {
-                return RedirectToAction("History", new
-                {
-                    id
-                });
-            }
-
-            ViewBag.Next = PostHistoryVersionService.GetFirstEntityNoTracking(p => p.PostId == id && p.ModifyDate > post.ModifyDate, p => p.ModifyDate);
-            ViewBag.Prev = PostHistoryVersionService.GetFirstEntityNoTracking(p => p.PostId == id && p.ModifyDate < post.ModifyDate, p => p.ModifyDate, false);
-            if (user.IsAdmin)
-            {
-                return View("HistoryVersion_Admin", post);
-            }
-
-            return View(post);
+            var post = await PostHistoryVersionService.GetAsync(v => v.Id == hid && (v.Post.Status == Status.Published || CurrentUser.IsAdmin)) ?? throw new NotFoundException("文章未找到");
+            CheckPermission(post.Post);
+            post.Content = ReplaceVariables(post.Content);
+            post.ProtectContent = ReplaceVariables(post.ProtectContent);
+            var next = await PostHistoryVersionService.GetAsync(p => p.PostId == id && p.ModifyDate > post.ModifyDate, p => p.ModifyDate);
+            var prev = await PostHistoryVersionService.GetAsync(p => p.PostId == id && p.ModifyDate < post.ModifyDate, p => p.ModifyDate, false);
+            ViewBag.Next = next;
+            ViewBag.Prev = prev;
+            ViewBag.Ads = AdsService.GetByWeightedPrice(AdvertiseType.InPage, post.CategoryId);
+            return CurrentUser.IsAdmin ? View("HistoryVersion_Admin", post) : View(post);
         }
 
         /// <summary>
@@ -180,26 +201,22 @@ namespace Masuit.MyBlogs.Core.Controllers
         /// <param name="v1"></param>
         /// <param name="v2"></param>
         /// <returns></returns>
-        [Route("{id:int}/history/{v1:int}-{v2:int}"), ResponseCache(Duration = 600, VaryByQueryKeys = new[] { "id", "v1", "v2" }, VaryByHeader = HeaderNames.Cookie)]
-        public ActionResult CompareVersion(int id, int v1, int v2)
+        [Route("{id:int}/history/{v1:int}-{v2:int}"), ResponseCache(Duration = 600, VaryByQueryKeys = new[] { "id", "v1", "v2" }, VaryByHeader = "Cookie")]
+        public async Task<ActionResult> CompareVersion(int id, int v1, int v2)
         {
-            var main = PostService.GetById(id).Mapper<PostHistoryVersion>();
-            var left = v1 <= 0 ? main : PostHistoryVersionService.GetById(v1);
-            var right = v2 <= 0 ? main : PostHistoryVersionService.GetById(v2);
-            if (left is null || right is null)
-            {
-                return RedirectToAction("History", "Post", new { id });
-            }
-            HtmlDiff.HtmlDiff diffHelper = new HtmlDiff.HtmlDiff(right.Content, left.Content);
-            string diffOutput = diffHelper.Build();
-            right.Content = Regex.Replace(Regex.Replace(diffOutput, "<ins.+?</ins>", string.Empty), @"<\w+></\w+>", string.Empty);
-            left.Content = Regex.Replace(Regex.Replace(diffOutput, "<del.+?</del>", string.Empty), @"<\w+></\w+>", string.Empty);
-            return View(new[]
-            {
-                main,
-                left,
-                right
-            });
+            var post = await PostService.GetAsync(p => p.Id == id && (p.Status == Status.Published || CurrentUser.IsAdmin));
+            CheckPermission(post);
+            var main = post.Mapper<PostHistoryVersion>() ?? throw new NotFoundException("文章未找到");
+            var left = v1 <= 0 ? main : await PostHistoryVersionService.GetAsync(v => v.Id == v1) ?? throw new NotFoundException("文章未找到");
+            var right = v2 <= 0 ? main : await PostHistoryVersionService.GetAsync(v => v.Id == v2) ?? throw new NotFoundException("文章未找到");
+            main.Id = id;
+            var diff = new HtmlDiff.HtmlDiff(right.Content, left.Content);
+            var diffOutput = diff.Build();
+            right.Content = ReplaceVariables(Regex.Replace(Regex.Replace(diffOutput, "<ins.+?</ins>", string.Empty), @"<\w+></\w+>", string.Empty));
+            left.Content = ReplaceVariables(Regex.Replace(Regex.Replace(diffOutput, "<del.+?</del>", string.Empty), @"<\w+></\w+>", string.Empty));
+            ViewBag.Ads = AdsService.GetsByWeightedPrice(2, AdvertiseType.InPage, main.CategoryId);
+            ViewBag.DisableCopy = post.DisableCopy;
+            return View(new[] { main, left, right });
         }
 
         /// <summary>
@@ -207,24 +224,22 @@ namespace Masuit.MyBlogs.Core.Controllers
         /// </summary>
         /// <param name="id"></param>
         /// <returns></returns>
-        public ActionResult VoteDown(int id)
+        public async Task<ActionResult> VoteDown(int id)
         {
-            Post post = PostService.GetById(id);
             if (HttpContext.Session.Get("post-vote" + id) != null)
             {
                 return ResultData(null, false, "您刚才已经投过票了，感谢您的参与！");
             }
 
-            if (post != null)
+            Post post = await PostService.GetByIdAsync(id) ?? throw new NotFoundException("文章未找到");
+            post.VoteDownCount = post.VoteDownCount + 1;
+            var b = await PostService.SaveChangesAsync() > 0;
+            if (b)
             {
                 HttpContext.Session.Set("post-vote" + id, id.GetBytes());
-                ++post.VoteDownCount;
-                PostService.UpdateEntity(post);
-                var b = PostService.SaveChanges() > 0;
-                return ResultData(null, b, b ? "投票成功！" : "投票失败！");
             }
 
-            return ResultData(null, false, "非法操作");
+            return ResultData(null, b, b ? "投票成功！" : "投票失败！");
         }
 
         /// <summary>
@@ -232,167 +247,119 @@ namespace Masuit.MyBlogs.Core.Controllers
         /// </summary>
         /// <param name="id"></param>
         /// <returns></returns>
-        public ActionResult VoteUp(int id)
+        public async Task<ActionResult> VoteUp(int id)
         {
-            Post post = PostService.GetById(id);
             if (HttpContext.Session.Get("post-vote" + id) != null)
             {
                 return ResultData(null, false, "您刚才已经投过票了，感谢您的参与！");
             }
 
-            if (post != null)
+            Post post = await PostService.GetByIdAsync(id) ?? throw new NotFoundException("文章未找到");
+            post.VoteUpCount += 1;
+            var b = await PostService.SaveChangesAsync() > 0;
+            if (b)
             {
                 HttpContext.Session.Set("post-vote" + id, id.GetBytes());
-                ++post.VoteUpCount;
-                PostService.UpdateEntity(post);
-                var b = PostService.SaveChanges() > 0;
-                return ResultData(null, b, b ? "投票成功！" : "投票失败！");
             }
 
-            return ResultData(null, false, "非法操作");
+            return ResultData(null, b, b ? "投票成功！" : "投票失败！");
         }
 
         /// <summary>
         /// 投稿页
         /// </summary>
         /// <returns></returns>
-        public ActionResult Publish()
+        public async Task<ActionResult> Publish()
         {
-            List<string> list = PostService.GetAll().Select(p => p.Label).ToList();
-            List<string> result = new List<string>();
-            list.ForEach(s =>
-            {
-                if (!string.IsNullOrEmpty(s))
-                {
-                    result.AddRange(s.Split(',', '，'));
-                }
-            });
-            ViewBag.Category = CategoryService.LoadEntitiesNoTracking(c => c.Status == Status.Available).ToList();
-            UserInfoOutputDto user = HttpContext.Session.GetByRedis<UserInfoOutputDto>(SessionKey.UserInfo);
-            if (user != null)
-            {
-                return View("Publish_Admin", result.Distinct().OrderBy(s => s));
-            }
-
-            return View(result.Distinct().OrderBy(s => s));
+            var list = await CategoryService.GetQueryFromCacheAsync(c => c.Status == Status.Available).ConfigureAwait(false);
+            return View(list);
         }
 
         /// <summary>
         /// 发布投稿
         /// </summary>
         /// <param name="post"></param>
+        /// <param name="code"></param>
         /// <returns></returns>
         [HttpPost, ValidateAntiForgeryToken]
-        public ActionResult Publish(PostInputDto post)
+        public async Task<ActionResult> Publish(PostCommand post, [Required(ErrorMessage = "验证码不能为空")] string code)
         {
-            UserInfoOutputDto user = HttpContext.Session.GetByRedis<UserInfoOutputDto>(SessionKey.UserInfo);
-            if (!CategoryService.Any(c => c.Id == post.CategoryId && c.Status == Status.Available))
+            if (await RedisHelper.GetAsync("code:" + post.Email) != code)
+            {
+                return ResultData(null, false, "验证码错误！");
+            }
+
+            if (PostService.Any(p => p.Status == Status.Forbidden && p.Email == post.Email))
+            {
+                return ResultData(null, false, "由于您曾经恶意投稿，该邮箱已经被标记为黑名单，无法进行投稿，如有疑问，请联系网站管理员进行处理。");
+            }
+
+            var match = Regex.Match(post.Title + post.Author + post.Content, CommonHelper.BanRegex);
+            if (match.Success)
+            {
+                LogManager.Info($"提交内容：{post.Title}/{post.Author}/{post.Content}，敏感词：{match.Value}");
+                return ResultData(null, false, "您提交的内容包含敏感词，被禁止发表，请检查您的内容后尝试重新提交！");
+            }
+
+            if (!CategoryService.Any(c => c.Id == post.CategoryId))
             {
                 return ResultData(null, message: "请选择一个分类");
             }
 
-            if (string.IsNullOrEmpty(post.Label?.Trim()))
-            {
-                post.Label = null;
-            }
-            else if (post.Label.Trim().Length > 50)
-            {
-                post.Label = post.Label.Replace("，", ",");
-                post.Label = post.Label.Trim().Substring(0, 50);
-            }
-            else
-            {
-                post.Label = post.Label.Replace("，", ",");
-            }
-
+            post.Label = string.IsNullOrEmpty(post.Label?.Trim()) ? null : post.Label.Replace("，", ",");
             post.Status = Status.Pending;
-            post.PostDate = DateTime.Now;
-            post.ModifyDate = DateTime.Now;
-            if (user != null && user.IsAdmin)
-            {
-                post.Status = Status.Pended;
-            }
-            else
-            {
-                post.Content = CommonHelper.ReplaceImgSrc(Regex.Replace(post.Content.HtmlSantinizerStandard(), @"<img\s+[^>]*\s*src\s*=\s*['""]?(\S+\.\w{3,4})['""]?[^/>]*/>", "<img src=\"$1\"/>")).Replace("/thumb150/", "/large/");
-            }
-
-            ViewBag.CategoryId = new SelectList(CategoryService.LoadEntitiesNoTracking(c => c.Status == Status.Available), "Id", "Name", post.CategoryId);
+            post.Content = await ImagebedClient.ReplaceImgSrc(post.Content.HtmlSantinizerStandard().ClearImgAttributes()).ConfigureAwait(false);
             Post p = post.Mapper<Post>();
-            p.PostAccessRecord.Add(new PostAccessRecord()
-            {
-                AccessTime = DateTime.Today,
-                ClickCount = 0
-            });
+            p.IP = ClientIP;
+            p.Modifier = p.Author;
+            p.ModifierEmail = p.Email;
+            p.DisableCopy = true;
             p = PostService.AddEntitySaved(p);
-            if (p != null)
+            if (p == null)
             {
-                if (p.Status == Status.Pending)
-                {
-                    var email = CommonHelper.SystemSettings["ReceiveEmail"];
-                    string link = Url.Action("Details", "Post", new
-                    {
-                        id = p.Id
-                    }, Request.Scheme);
-                    string content = System.IO.File.ReadAllText(_hostingEnvironment.WebRootPath + "/template/publish.html").Replace("{{link}}", link).Replace("{{time}}", DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss")).Replace("{{title}}", p.Title);
-                    BackgroundJob.Enqueue(() => CommonHelper.SendMail(CommonHelper.SystemSettings["Title"] + "有访客投稿：", content, email));
-                    return ResultData(p.Mapper<PostOutputDto>(), message: "文章发表成功，待站长审核通过以后将显示到列表中！");
-                }
-
-                return ResultData(p.Mapper<PostOutputDto>(), message: "文章发表成功！");
+                return ResultData(null, false, "文章发表失败！");
             }
 
-            return ResultData(null, false, "文章发表失败！");
+            await RedisHelper.ExpireAsync("code:" + p.Email, 1);
+            var content = new Template(await System.IO.File.ReadAllTextAsync(HostEnvironment.WebRootPath + "/template/publish.html"))
+                .Set("link", Url.Action("Details", "Post", new { id = p.Id }, Request.Scheme))
+                .Set("time", DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"))
+                .Set("title", p.Title).Render();
+            BackgroundJob.Enqueue(() => CommonHelper.SendMail(CommonHelper.SystemSettings["Title"] + "有访客投稿：", content, CommonHelper.SystemSettings["ReceiveEmail"], ClientIP));
+            return ResultData(p.Mapper<PostDto>(), message: "文章发表成功，待站长审核通过以后将显示到列表中！");
         }
 
         /// <summary>
         /// 获取标签
         /// </summary>
         /// <returns></returns>
-        [ResponseCache(Duration = 600, VaryByHeader = HeaderNames.Cookie)]
+        [ResponseCache(Duration = 600, VaryByHeader = "Cookie")]
         public ActionResult GetTag()
         {
-            List<string> list = PostService.GetAll().Select(p => p.Label).ToList();
-            List<string> result = new List<string>();
-            list.ForEach(s =>
-            {
-                if (!string.IsNullOrEmpty(s))
-                {
-                    result.AddRange(s.Split(',', '，'));
-                }
-            });
-            return ResultData(result.Distinct().OrderBy(s => s));
+            var list = PostService.GetQuery(p => !string.IsNullOrEmpty(p.Label)).Select(p => p.Label).Distinct().ToList().SelectMany(s => s.Split(',', '，')).GroupBy(s => s).Where(g => g.Count() > 1).OrderBy(s => s.Key).Select(g => g.Key).ToHashSet();
+            return ResultData(list);
         }
 
         /// <summary>
         /// 标签云
         /// </summary>
         /// <returns></returns>
-        [Route("all"), ResponseCache(Duration = 600, VaryByHeader = HeaderNames.Cookie)]
+        [Route("all"), ResponseCache(Duration = 600, VaryByHeader = "Cookie")]
         public ActionResult All()
         {
-            UserInfoOutputDto user = HttpContext.Session.GetByRedis<UserInfoOutputDto>(SessionKey.UserInfo) ?? new UserInfoOutputDto();
-            List<string> tags = PostService.GetAll().Select(p => p.Label).ToList(); //tag
-            List<string> result = new List<string>();
-            tags.ForEach(s =>
-            {
-                if (!string.IsNullOrEmpty(s))
-                {
-                    result.AddRange(s.Split(',', '，'));
-                }
-            });
-            ViewBag.tags = result.GroupBy(t => t).OrderByDescending(g => g.Count()).ThenBy(g => g.Key);
-            ViewBag.cats = CategoryService.GetAll(c => c.Post.Count, false).Select(c => new TagCloudViewModel()
+            var tags = PostService.GetQuery(p => !string.IsNullOrEmpty(p.Label)).Select(p => p.Label).ToList().SelectMany(s => s.Split(',', '，')).GroupBy(t => t).Where(g => g.Count() > 1).OrderByDescending(g => g.Count()).ThenBy(g => g.Key).ToList(); //tag
+            ViewBag.tags = tags;
+            ViewBag.cats = CategoryService.GetAll(c => c.Post.Count, false).Select(c => new TagCloudViewModel
             {
                 Id = c.Id,
                 Name = c.Name,
-                Count = c.Post.Count(p => p.Status == Status.Pended || user.IsAdmin)
+                Count = c.Post.Count(p => p.Status == Status.Published || CurrentUser.IsAdmin)
             }).ToList(); //category
             ViewBag.seminars = SeminarService.GetAll(c => c.Post.Count, false).Select(c => new TagCloudViewModel
             {
                 Id = c.Id,
                 Name = c.Title,
-                Count = c.Post.Count(p => p.Post.Status == Status.Pended || user.IsAdmin)
+                Count = c.Post.Count(p => p.Post.Status == Status.Published || CurrentUser.IsAdmin)
             }).ToList(); //seminars
             return View();
         }
@@ -400,24 +367,35 @@ namespace Masuit.MyBlogs.Core.Controllers
         /// <summary>
         /// 检查访问密码
         /// </summary>
+        /// <param name="email"></param>
         /// <param name="token"></param>
         /// <returns></returns>
-        [HttpPost, ValidateAntiForgeryToken]
-        public ActionResult CheckViewToken(string token)
+        [HttpPost, ValidateAntiForgeryToken, AllowAccessFirewall, ResponseCache(Duration = 115, VaryByQueryKeys = new[] { "email", "token" })]
+        public ActionResult CheckViewToken(string email, string token)
         {
             if (string.IsNullOrEmpty(token))
             {
-                return ResultData(null, false, "请输入文章访问密码！");
+                return ResultData(null, false, "请输入访问密码！");
             }
 
-            var s = RedisHelper.Get("ArticleViewToken");
+            var s = RedisHelper.Get("token:" + email);
             if (token.Equals(s))
             {
-                HttpContext.Session.SetByRedis("ArticleViewToken", token);
+                HttpContext.Session.Set("AccessViewToken", token);
+                Response.Cookies.Append("Email", email, new CookieOptions
+                {
+                    Expires = DateTime.Now.AddYears(1),
+                    SameSite = SameSiteMode.Lax
+                });
+                Response.Cookies.Append("PostAccessToken", email.MDString3(AppConfig.BaiduAK), new CookieOptions
+                {
+                    Expires = DateTime.Now.AddYears(1),
+                    SameSite = SameSiteMode.Lax
+                });
                 return ResultData(null);
             }
 
-            return ResultData(null, false, "文章访问密码不正确！");
+            return ResultData(null, false, "访问密码不正确！");
         }
 
         /// <summary>
@@ -425,22 +403,143 @@ namespace Masuit.MyBlogs.Core.Controllers
         /// </summary>
         /// <param name="email"></param>
         /// <returns></returns>
-        [HttpPost, ValidateAntiForgeryToken, ResponseCache(Duration = 600, VaryByQueryKeys = new[] { "email" })]
+        [HttpPost, ValidateAntiForgeryToken, AllowAccessFirewall, ResponseCache(Duration = 115, VaryByQueryKeys = new[] { "email" })]
         public ActionResult GetViewToken(string email)
         {
-            if (string.IsNullOrEmpty(email) && !email.MatchEmail())
+            if (string.IsNullOrEmpty(email) || !email.MatchEmail().isMatch)
             {
                 return ResultData(null, false, "请输入正确的邮箱！");
             }
 
-            if (BroadcastService.Any(b => b.Email.Equals(email) && b.SubscribeType == SubscribeType.ArticleToken))
+            if (RedisHelper.Exists("get:" + email))
             {
-                var s = RedisHelper.Get("ArticleViewToken");
-                HttpContext.Session.SetByRedis("ArticleViewToken", s);
-                return ResultData(null);
+                RedisHelper.Expire("get:" + email, 120);
+                return ResultData(null, false, "发送频率限制，请在2分钟后重新尝试发送邮件！请检查你的邮件，若未收到，请检查你的邮箱地址或邮件垃圾箱！");
             }
 
-            return ResultData(null, false, "您目前没有权限访问这篇文章的加密部分，请联系站长开通这篇文章的访问权限！");
+            if (!UserInfoService.Any(b => b.Email.Equals(email)))
+            {
+                return ResultData(null, false, "您目前没有权限访问这个链接，请联系站长开通访问权限！");
+            }
+
+            var token = SnowFlake.GetInstance().GetUniqueShortId(6);
+            RedisHelper.Set("token:" + email, token, 86400);
+            BackgroundJob.Enqueue(() => CommonHelper.SendMail(Request.Host + "博客访问验证码", $"{Request.Host}本次验证码是：<span style='color:red'>{token}</span>，有效期为24h，请按时使用！", email, ClientIP));
+            RedisHelper.Set("get:" + email, token, 120);
+            return ResultData(null);
+
+        }
+
+        /// <summary>
+        /// 文章合并
+        /// </summary>
+        /// <param name="id"></param>
+        /// <returns></returns>
+        [HttpGet("{id}/merge")]
+        public async Task<ActionResult> PushMerge(int id)
+        {
+            var post = await PostService.GetByIdAsync(id) ?? throw new NotFoundException("文章未找到");
+            return View(post);
+        }
+
+        /// <summary>
+        /// 文章合并
+        /// </summary>
+        /// <param name="id"></param>
+        /// <param name="mid"></param>
+        /// <returns></returns>
+        [HttpGet("{id}/merge/{mid}")]
+        public async Task<ActionResult> RepushMerge(int id, int mid)
+        {
+            var post = await PostService.GetByIdAsync(id) ?? throw new NotFoundException("文章未找到");
+            var merge = post.PostMergeRequests.FirstOrDefault(p => p.Id == mid && p.MergeState != MergeStatus.Merged) ?? throw new NotFoundException("待合并文章未找到");
+            return View(merge);
+        }
+
+        /// <summary>
+        /// 文章合并
+        /// </summary>
+        /// <param name="dto"></param>
+        /// <returns></returns>
+        [HttpPost("{id}/pushmerge")]
+        public async Task<ActionResult> PushMerge(PostMergeRequestCommand dto)
+        {
+            if (await RedisHelper.GetAsync("code:" + dto.ModifierEmail) != dto.Code)
+            {
+                return ResultData(null, false, "验证码错误！");
+            }
+
+            var post = await PostService.GetByIdAsync(dto.PostId) ?? throw new NotFoundException("文章未找到");
+            var htmlDiff = new HtmlDiff.HtmlDiff(post.Content.RemoveHtmlTag(), dto.Content.RemoveHtmlTag());
+            var diff = htmlDiff.Build();
+            if (post.Title.Equals(dto.Title) && !diff.Contains(new[] { "diffmod", "diffdel", "diffins" }))
+            {
+                return ResultData(null, false, "内容未被修改！");
+            }
+
+            #region 合并验证
+
+            if (PostMergeRequestService.Any(p => p.ModifierEmail == dto.ModifierEmail && p.MergeState == MergeStatus.Block))
+            {
+                return ResultData(null, false, "由于您曾经多次恶意修改文章，已经被标记为黑名单，无法修改任何文章，如有疑问，请联系网站管理员进行处理。");
+            }
+
+            if (post.PostMergeRequests.Any(p => p.ModifierEmail == dto.ModifierEmail && p.MergeState == MergeStatus.Pending))
+            {
+                return ResultData(null, false, "您已经提交过一次修改请求正在待处理，暂不能继续提交修改请求！");
+            }
+
+            #endregion
+
+            #region 直接合并
+
+            if (post.Email.Equals(dto.ModifierEmail))
+            {
+                var history = post.Mapper<PostHistoryVersion>();
+                Mapper.Map(dto, post);
+                post.PostHistoryVersion.Add(history);
+                post.ModifyDate = DateTime.Now;
+                return await PostService.SaveChangesAsync() > 0 ? ResultData(null, true, "你是文章原作者，无需审核，文章已自动更新并在首页展示！") : ResultData(null, false, "操作失败！");
+            }
+
+            #endregion
+
+            var merge = post.PostMergeRequests.FirstOrDefault(r => r.Id == dto.Id && r.MergeState != MergeStatus.Merged);
+            if (merge != null)
+            {
+                Mapper.Map(dto, merge);
+                merge.SubmitTime = DateTime.Now;
+                merge.MergeState = MergeStatus.Pending;
+            }
+            else
+            {
+                merge = Mapper.Map<PostMergeRequest>(dto);
+                merge.SubmitTime = DateTime.Now;
+                post.PostMergeRequests.Add(merge);
+            }
+
+            var b = await PostService.SaveChangesAsync() > 0;
+            if (!b)
+            {
+                return ResultData(null, false, "操作失败！");
+            }
+
+            await RedisHelper.ExpireAsync("code:" + dto.ModifierEmail, 1);
+            await MessageService.AddEntitySavedAsync(new InternalMessage()
+            {
+                Title = $"来自【{dto.Modifier}】对文章《{post.Title}》的修改请求",
+                Content = dto.Title,
+                Link = "#/merge/compare?id=" + merge.Id
+            });
+            var content = new Template(await System.IO.File.ReadAllTextAsync(HostEnvironment.WebRootPath + "/template/merge-request.html"))
+                .Set("title", post.Title)
+                .Set("link", Url.Action("Index", "Dashboard", new { }, Request.Scheme) + "#/merge/compare?id=" + merge.Id)
+                .Set("diff", diff)
+                .Set("host", "//" + Request.Host)
+                .Set("id", merge.Id.ToString())
+                .Render();
+            BackgroundJob.Enqueue(() => CommonHelper.SendMail("博客文章修改请求：", content, CommonHelper.SystemSettings["ReceiveEmail"], ClientIP));
+            return ResultData(null, true, "您的修改请求已提交，已进入审核状态，感谢您的参与！");
         }
 
         #region 后端管理
@@ -450,18 +549,13 @@ namespace Masuit.MyBlogs.Core.Controllers
         /// </summary>
         /// <param name="id"></param>
         /// <returns></returns>
-        [Authority]
-        public ActionResult Fixtop(int id)
+        [MyAuthorize]
+        public async Task<ActionResult> Fixtop(int id)
         {
-            Post post = PostService.GetById(id);
+            Post post = await PostService.GetByIdAsync(id) ?? throw new NotFoundException("文章未找到");
             post.IsFixedTop = !post.IsFixedTop;
-            bool b = PostService.UpdateEntitySaved(post);
-            if (b)
-            {
-                return ResultData(null, true, post.IsFixedTop ? "置顶成功！" : "取消置顶成功！");
-            }
-
-            return ResultData(null, false, "操作失败！");
+            bool b = await PostService.SaveChangesAsync() > 0;
+            return b ? ResultData(null, true, post.IsFixedTop ? "置顶成功！" : "取消置顶成功！") : ResultData(null, false, "操作失败！");
         }
 
         /// <summary>
@@ -469,35 +563,23 @@ namespace Masuit.MyBlogs.Core.Controllers
         /// </summary>
         /// <param name="id"></param>
         /// <returns></returns>
-        [Authority]
-        public ActionResult Pass(int id)
+        [MyAuthorize]
+        public async Task<ActionResult> Pass(int id)
         {
-            Post post = PostService.GetById(id);
-            post.Status = Status.Pended;
+            Post post = await PostService.GetByIdAsync(id) ?? throw new NotFoundException("文章未找到");
+            post.Status = Status.Published;
             post.ModifyDate = DateTime.Now;
             post.PostDate = DateTime.Now;
-            bool b = PostService.UpdateEntitySaved(post);
+            bool b = await PostService.SaveChangesAsync() > 0;
             if (!b)
             {
+                SearchEngine.LuceneIndexer.Add(post);
                 return ResultData(null, false, "审核失败！");
             }
-            if ("false" == CommonHelper.SystemSettings["DisabledEmailBroadcast"])
+
+            if ("true" == CommonHelper.SystemSettings["DisabledEmailBroadcast"])
             {
-                var cast = BroadcastService.LoadEntities(c => c.Status == Status.Subscribed).ToList();
-                string link = Request.Scheme + "://" + Request.Host + "/" + id;
-                cast.ForEach(c =>
-                {
-                    var ts = DateTime.Now.GetTotalMilliseconds();
-                    string content = System.IO.File.ReadAllText(_hostingEnvironment.WebRootPath + "/template/broadcast.html").Replace("{{link}}", link + "?email=" + c.Email).Replace("{{time}}", post.ModifyDate.ToString("yyyy-MM-dd HH:mm:ss")).Replace("{{title}}", post.Title).Replace("{{author}}", post.Author).Replace("{{content}}", post.Content.RemoveHtmlTag(150)).Replace("{{cancel}}", Url.Action("Subscribe", "Subscribe", new
-                    {
-                        c.Email,
-                        act = "cancel",
-                        validate = c.ValidateCode,
-                        timespan = ts,
-                        hash = (c.Email + "cancel" + c.ValidateCode + ts).AESEncrypt(AppConfig.BaiduAK)
-                    }, Request.Scheme));
-                    BackgroundJob.Enqueue(() => CommonHelper.SendMail(CommonHelper.SystemSettings["Title"] + "博客有新文章发布了", content, c.Email));
-                });
+                return ResultData(null, true, "审核通过！");
             }
 
             return ResultData(null, true, "审核通过！");
@@ -508,13 +590,13 @@ namespace Masuit.MyBlogs.Core.Controllers
         /// </summary>
         /// <param name="id"></param>
         /// <returns></returns>
-        [Authority]
-        public ActionResult Delete(int id)
+        [MyAuthorize]
+        public async Task<ActionResult> Delete(int id)
         {
-            var post = PostService.GetById(id);
+            var post = await PostService.GetByIdAsync(id) ?? throw new NotFoundException("文章未找到");
             post.Status = Status.Deleted;
-            bool b = PostService.UpdateEntitySaved(post);
-            _searchEngine.LuceneIndexer.Delete(post);
+            bool b = await PostService.SaveChangesAsync(true) > 0;
+            SearchEngine.LuceneIndexer.Delete(post);
             return ResultData(null, b, b ? "删除成功！" : "删除失败！");
         }
 
@@ -523,12 +605,13 @@ namespace Masuit.MyBlogs.Core.Controllers
         /// </summary>
         /// <param name="id"></param>
         /// <returns></returns>
-        [Authority]
-        public ActionResult Restore(int id)
+        [MyAuthorize]
+        public async Task<ActionResult> Restore(int id)
         {
-            var post = PostService.GetById(id);
-            post.Status = Status.Pended;
-            bool b = PostService.UpdateEntitySaved(post);
+            var post = await PostService.GetByIdAsync(id) ?? throw new NotFoundException("文章未找到");
+            post.Status = Status.Published;
+            bool b = await PostService.SaveChangesAsync() > 0;
+            SearchEngine.LuceneIndexer.Add(post);
             return ResultData(null, b, b ? "恢复成功！" : "恢复失败！");
         }
 
@@ -537,27 +620,10 @@ namespace Masuit.MyBlogs.Core.Controllers
         /// </summary>
         /// <param name="id"></param>
         /// <returns></returns>
-        [Authority]
-        public ActionResult Truncate(int id)
+        [MyAuthorize]
+        public async Task<ActionResult> Truncate(int id)
         {
-            var post = PostService.GetById(id);
-            if (post is null)
-            {
-                return ResultData(null, false, "文章已经被删除！");
-            }
-
-            if (post.IsWordDocument)
-            {
-                try
-                {
-                    System.IO.File.Delete(Path.Combine(_hostingEnvironment.WebRootPath + "/upload", post.ResourceName));
-                    Directory.Delete(Path.Combine(_hostingEnvironment.WebRootPath + "/upload", Path.GetFileNameWithoutExtension(post.ResourceName)), true);
-                }
-                catch (IOException)
-                {
-                }
-            }
-
+            var post = await PostService.GetByIdAsync(id) ?? throw new NotFoundException("文章未找到");
             var srcs = post.Content.MatchImgSrcs();
             foreach (var path in srcs)
             {
@@ -565,7 +631,7 @@ namespace Masuit.MyBlogs.Core.Controllers
                 {
                     try
                     {
-                        System.IO.File.Delete(_hostingEnvironment.WebRootPath + path);
+                        System.IO.File.Delete(HostEnvironment.WebRootPath + path);
                     }
                     catch (IOException)
                     {
@@ -573,7 +639,7 @@ namespace Masuit.MyBlogs.Core.Controllers
                 }
             }
 
-            bool b = PostService.DeleteByIdSaved(id);
+            bool b = PostService - id;
             return ResultData(null, b, b ? "删除成功！" : "删除失败！");
         }
 
@@ -582,128 +648,41 @@ namespace Masuit.MyBlogs.Core.Controllers
         /// </summary>
         /// <param name="id"></param>
         /// <returns></returns>
-        [Authority]
-        public ActionResult Get(int id)
+        [MyAuthorize]
+        public async Task<ActionResult> Get(int id)
         {
-            Post post = PostService.GetById(id);
-            PostOutputDto model = post.Mapper<PostOutputDto>();
-            model.Seminars = string.Join(",", post.Seminar.Select(s => s.Seminar.Title));
+            Post post = PostService[id] ?? throw new NotFoundException("文章未找到");
+            PostDto model = post.Mapper<PostDto>();
+            model.Seminars = post.Seminar.Select(s => s.Seminar.Title).Join(",");
             return ResultData(model);
-        }
-
-        /// <summary>
-        /// 文章详情
-        /// </summary>
-        /// <param name="id"></param>
-        /// <returns></returns>
-        [Authority]
-        public ActionResult Read(int id) => ResultData(PostService.GetById(id).Mapper<PostOutputDto>());
-
-        /// <summary>
-        /// 获取所有文章
-        /// </summary>
-        /// <returns></returns>
-        public ActionResult GetAllData()
-        {
-            var plist = PostService.LoadEntitiesNoTracking(p => p.Status != Status.Deleted).OrderBy(p => p.Status).ThenByDescending(p => p.IsFixedTop).ThenByDescending(p => p.ModifyDate).Select(p => new
-            {
-                p.Id,
-                p.Author,
-                CategoryName = p.Category.Name,
-                p.Email,
-                p.IsFixedTop,
-                p.Label,
-                md = p.ModifyDate,
-                pd = p.PostDate,
-                p.Title,
-                ViewCount = p.TotalViewCount,
-                p.VoteDownCount,
-                p.VoteUpCount,
-                stat = p.Status
-            }).ToList();
-            var list = new List<PostDataModel>();
-            plist.ForEach(item =>
-            {
-                PostDataModel model = item.MapTo<PostDataModel>();
-                model.PostDate = item.pd.ToString("yyyy-MM-dd HH:mm");
-                model.ModifyDate = item.md.ToString("yyyy-MM-dd HH:mm");
-                model.Status = item.stat.GetDisplay();
-                list.Add(model);
-            });
-            return ResultData(list);
         }
 
         /// <summary>
         /// 获取文章分页
         /// </summary>
         /// <returns></returns>
-        public ActionResult GetPageData(int page = 1, int size = 10, OrderBy orderby = OrderBy.ModifyDate, string kw = "")
+        [MyAuthorize]
+        public ActionResult GetPageData([Range(1, int.MaxValue, ErrorMessage = "页数必须大于0")] int page = 1, [Range(1, int.MaxValue, ErrorMessage = "页大小必须大于0")] int size = 10, OrderBy orderby = OrderBy.ModifyDate, string kw = "", int? cid = null)
         {
-            if (page < 1)
+            Expression<Func<Post, bool>> where = p => true;
+            if (cid.HasValue)
             {
-                page = 1;
+                where = where.And(p => p.CategoryId == cid.Value);
             }
 
-            if (size < 1)
+            if (!string.IsNullOrEmpty(kw))
             {
-                page = 10;
+                where = where.And(p => p.Title.Contains(kw) || p.Author.Contains(kw) || p.Email.Contains(kw) || p.Label.Contains(kw) || p.Content.Contains(kw));
             }
 
-            var list = new List<PostDataModel>();
-            IOrderedQueryable<Post> temp;
-            var query = string.IsNullOrEmpty(kw) ? PostService.GetAllNoTracking() : PostService.LoadEntitiesNoTracking(p => p.Title.Contains(kw) || p.Author.Contains(kw) || p.Email.Contains(kw) || p.Label.Contains(kw) || p.Content.Contains(kw));
-            var total = query.Count();
-            var order = query.OrderByDescending(p => p.Status).ThenByDescending(p => p.IsFixedTop);
-            switch (orderby)
+            var list = PostService.GetQuery(where).OrderBy($"{nameof(Post.Status)} desc,{nameof(Post.IsFixedTop)} desc,{orderby.GetDisplay()} desc").ToPagedList<Post, PostDataModel>(page, size, MapperConfig);
+            foreach (var item in list.Data)
             {
-                case OrderBy.CommentCount:
-                    temp = order.ThenByDescending(p => p.Comment.Count);
-                    break;
-                case OrderBy.PostDate:
-                    temp = order.ThenByDescending(p => p.PostDate);
-                    break;
-                case OrderBy.ViewCount:
-                    temp = order.ThenByDescending(p => p.TotalViewCount);
-                    break;
-                case OrderBy.VoteCount:
-                    temp = order.ThenByDescending(p => p.VoteUpCount);
-                    break;
-                case OrderBy.AverageViewCount:
-                    temp = order.ThenByDescending(p => p.AverageViewCount);
-                    break;
-                default:
-                    temp = order.ThenByDescending(p => p.ModifyDate);
-                    break;
+                item.ModifyDate = item.ModifyDate.ToTimeZone(HttpContext.Session.Get<string>(SessionKey.TimeZone));
+                item.PostDate = item.PostDate.ToTimeZone(HttpContext.Session.Get<string>(SessionKey.TimeZone));
             }
 
-            var plist = temp.Skip((page - 1) * size).Take(size).Select(p => new
-            {
-                p.Id,
-                p.Author,
-                CategoryName = p.Category.Name,
-                p.Email,
-                p.IsFixedTop,
-                p.Label,
-                md = p.ModifyDate,
-                pd = p.PostDate,
-                p.Title,
-                ViewCount = p.TotalViewCount,
-                p.VoteDownCount,
-                p.VoteUpCount,
-                stat = p.Status,
-                ModifyCount = p.PostHistoryVersion.Count
-            }).ToList();
-            plist.ForEach(item =>
-            {
-                PostDataModel model = item.MapTo<PostDataModel>();
-                model.PostDate = item.pd.ToString("yyyy-MM-dd HH:mm");
-                model.ModifyDate = item.md.ToString("yyyy-MM-dd HH:mm");
-                model.Status = item.stat.GetDisplay();
-                model.ModifyCount = item.ModifyCount;
-                list.Add(model);
-            });
-            var pageCount = Math.Ceiling(total * 1.0 / size).ToInt32();
-            return PageResult(list, pageCount, total);
+            return Ok(list);
         }
 
         /// <summary>
@@ -713,149 +692,80 @@ namespace Masuit.MyBlogs.Core.Controllers
         /// <param name="size"></param>
         /// <param name="search"></param>
         /// <returns></returns>
-        [Authority]
-        public ActionResult GetPending(int page = 1, int size = 10, string search = "")
+        [MyAuthorize]
+        public async Task<ActionResult> GetPending([Range(1, int.MaxValue, ErrorMessage = "页码必须大于0")] int page = 1, [Range(1, 50, ErrorMessage = "页大小必须在0到50之间")] int size = 15, string search = "")
         {
-            int total;
-            IQueryable<Post> temp;
-            if (string.IsNullOrEmpty(search))
+            Expression<Func<Post, bool>> where = p => p.Status == Status.Pending;
+            if (!string.IsNullOrEmpty(search))
             {
-                temp = PostService.LoadPageEntitiesNoTracking(page, size, out total, p => p.Status == Status.Pending, p => p.Id);
-            }
-            else
-            {
-                temp = PostService.LoadPageEntitiesNoTracking(page, size, out total, p => p.Status == Status.Pending && (p.Title.Contains(search) || p.Author.Contains(search) || p.Email.Contains(search) || p.Label.Contains(search)), p => p.Id);
+                where = where.And(p => p.Title.Contains(search) || p.Author.Contains(search) || p.Email.Contains(search) || p.Label.Contains(search));
             }
 
-            var plist = temp.OrderByDescending(p => p.IsFixedTop).ThenByDescending(p => p.ModifyDate).Select(p => new
+            var pages = await PostService.GetQuery(where).OrderByDescending(p => p.IsFixedTop).ThenByDescending(p => p.ModifyDate).ToCachedPagedListAsync<Post, PostDataModel>(page, size, MapperConfig);
+            foreach (var item in pages.Data)
             {
-                p.Id,
-                p.Author,
-                CategoryName = p.Category.Name,
-                p.Email,
-                p.IsFixedTop,
-                p.Label,
-                md = p.ModifyDate,
-                pd = p.PostDate,
-                p.Title,
-                ViewCount = p.TotalViewCount,
-                p.VoteDownCount,
-                p.VoteUpCount,
-                stat = p.Status
-            }).ToList();
-            var list = new List<PostDataModel>();
-            plist.ForEach(item =>
-            {
-                PostDataModel model = item.MapTo<PostDataModel>();
-                model.PostDate = item.pd.ToString("yyyy-MM-dd HH:mm");
-                model.ModifyDate = item.md.ToString("yyyy-MM-dd HH:mm");
-                model.Status = item.stat.GetDisplay();
-                list.Add(model);
-            });
-            var pageCount = Math.Ceiling(total * 1.0 / size).ToInt32();
-            return PageResult(list, pageCount, total);
+                item.ModifyDate = item.ModifyDate.ToTimeZone(HttpContext.Session.Get<string>(SessionKey.TimeZone));
+                item.PostDate = item.PostDate.ToTimeZone(HttpContext.Session.Get<string>(SessionKey.TimeZone));
+            }
+
+            return Ok(pages);
         }
 
         /// <summary>
         /// 编辑
         /// </summary>
         /// <param name="post"></param>
-        /// <param name="notify"></param>
-        /// <param name="reserve"></param>
+        /// <param name="reserve">是否保留历史版本</param>
         /// <returns></returns>
-        [HttpPost, Authority]
-        public ActionResult Edit(PostInputDto post, bool notify = true, bool reserve = true)
+        [HttpPost, MyAuthorize]
+        public async Task<ActionResult> Edit(PostCommand post, bool reserve = true)
         {
-            post.Content = CommonHelper.ReplaceImgSrc(Regex.Replace(post.Content.Trim(), @"<img\s+[^>]*\s*src\s*=\s*['""]?(\S+\.\w{3,4})['""]?[^/>]*/>", "<img src=\"$1\"/>")).Replace("/thumb150/", "/large/");
-            if (!CategoryService.Any(c => c.Id == post.CategoryId && c.Status == Status.Available))
+            post.Content = await ImagebedClient.ReplaceImgSrc(post.Content.Trim().ClearImgAttributes());
+            if (!ValidatePost(post, out var resultData))
             {
-                return ResultData(null, message: "请选择一个分类");
+                return resultData;
             }
 
-            if (string.IsNullOrEmpty(post.Label?.Trim()) || post.Label.Equals("null"))
+            Post p = await PostService.GetByIdAsync(post.Id);
+            if (reserve && p.Status == Status.Published)
             {
-                post.Label = null;
-            }
-            else if (post.Label.Trim().Length > 50)
-            {
-                post.Label = post.Label.Replace("，", ",");
-                post.Label = post.Label.Trim().Substring(0, 50);
-            }
-            else
-            {
-                post.Label = post.Label.Replace("，", ",");
-            }
-
-            if (!post.IsWordDocument)
-            {
-                post.ResourceName = null;
-            }
-
-            if (string.IsNullOrEmpty(post.ProtectContent) || post.ProtectContent.Equals("null", StringComparison.InvariantCultureIgnoreCase))
-            {
-                post.ProtectContent = null;
-            }
-
-            Post p = PostService.GetById(post.Id);
-            if (reserve)
-            {
-                post.ModifyDate = DateTime.Now;
                 var history = p.Mapper<PostHistoryVersion>();
-                history.Id = 0;
                 p.PostHistoryVersion.Add(history);
+                p.ModifyDate = DateTime.Now;
+                var user = HttpContext.Session.Get<UserInfoDto>(SessionKey.UserInfo);
+                p.Modifier = user.NickName;
+                p.ModifierEmail = user.Email;
             }
 
+            p.IP = ClientIP;
             Mapper.Map(post, p);
             if (!string.IsNullOrEmpty(post.Seminars))
             {
                 var tmp = post.Seminars.Split(',').Distinct();
                 p.Seminar.Clear();
-                tmp.ForEach(s =>
+                foreach (var s in tmp)
                 {
-                    Seminar seminar = SeminarService.GetFirstEntity(e => e.Title.Equals(s));
-                    p.Seminar.Add(new SeminarPost()
+                    var seminar = await SeminarService.GetAsync(e => e.Title.Equals(s));
+                    if (seminar != null)
                     {
-                        Post = p,
-                        Seminar = seminar,
-                        PostId = p.Id,
-                        SeminarId = seminar.Id
-                    });
-                });
-            }
-
-            bool b = PostService.UpdateEntitySaved(p);
-            if (b)
-            {
-#if !DEBUG
-                if (notify && "false" == CommonHelper.SystemSettings["DisabledEmailBroadcast"])
-                {
-                    var cast = BroadcastService.LoadEntities(c => c.Status == Status.Subscribed).ToList();
-                    string link = Request.Scheme + "://" + Request.Host + "/" + p.Id;
-                    cast.ForEach(c =>
-                    {
-                        var ts = DateTime.Now.GetTotalMilliseconds();
-                        string content = System.IO.File.ReadAllText(Path.Combine(_hostingEnvironment.WebRootPath, "template", "broadcast.html"))
-                            .Replace("{{link}}", link + "?email=" + c.Email)
-                            .Replace("{{time}}", post.ModifyDate.ToString("yyyy-MM-dd HH:mm:ss"))
-                            .Replace("{{title}}", post.Title)
-                            .Replace("{{author}}", post.Author)
-                            .Replace("{{content}}", post.Content.RemoveHtmlTag(150))
-                            .Replace("{{cancel}}", Url.Action("Subscribe", "Subscribe", new
-                            {
-                                c.Email,
-                                act = "cancel",
-                                validate = c.ValidateCode,
-                                timespan = ts,
-                                hash = (c.Email + "cancel" + c.ValidateCode + ts).AESEncrypt(AppConfig.BaiduAK)
-                            }, Request.Scheme));
-                        BackgroundJob.Schedule(() => CommonHelper.SendMail(CommonHelper.SystemSettings["Title"] + "博客有新文章发布了", content, c.Email), (p.ModifyDate - DateTime.Now));
-                    });
+                        p.Seminar.Add(new SeminarPost()
+                        {
+                            Post = p,
+                            Seminar = seminar,
+                            PostId = p.Id,
+                            SeminarId = seminar.Id
+                        });
+                    }
                 }
-#endif
-                return ResultData(p.Mapper<PostOutputDto>(), message: "文章修改成功！");
             }
 
-            return ResultData(null, false, "文章修改失败！");
+            bool b = await SearchEngine.SaveChangesAsync() > 0;
+            if (!b)
+            {
+                return ResultData(null, false, "文章修改失败！");
+            }
+
+            return ResultData(p.Mapper<PostDto>(), message: "文章修改成功！");
         }
 
         /// <summary>
@@ -865,13 +775,89 @@ namespace Masuit.MyBlogs.Core.Controllers
         /// <param name="timespan"></param>
         /// <param name="schedule"></param>
         /// <returns></returns>
-        [Authority, HttpPost]
-        public ActionResult Write(PostInputDto post, DateTime? timespan, bool schedule = false)
+        [MyAuthorize, HttpPost]
+        public async Task<ActionResult> Write(PostCommand post, DateTime? timespan, bool schedule = false)
         {
-            post.Content = CommonHelper.ReplaceImgSrc(Regex.Replace(post.Content.Trim(), @"<img\s+[^>]*\s*src\s*=\s*['""]?(\S+\.\w{3,4})['""]?[^/>]*/>", "<img src=\"$1\"/>")).Replace("/thumb150/", "/large/"); //提取img标签，提取src属性并重新创建个只包含src属性的img标签
+            post.Content = await ImagebedClient.ReplaceImgSrc(post.Content.Trim().ClearImgAttributes());
+            if (!ValidatePost(post, out var resultData))
+            {
+                return resultData;
+            }
+
+            post.Status = Status.Published;
+            Post p = post.Mapper<Post>();
+            p.Modifier = p.Author;
+            p.ModifierEmail = p.Email;
+            p.IP = ClientIP;
+            if (!string.IsNullOrEmpty(post.Seminars))
+            {
+                var tmp = post.Seminars.Split(',').Distinct();
+                foreach (var s in tmp)
+                {
+                    var id = s.ToInt32();
+                    Seminar seminar = await SeminarService.GetByIdAsync(id);
+                    p.Seminar.Add(new SeminarPost()
+                    {
+                        Post = p,
+                        PostId = p.Id,
+                        Seminar = seminar,
+                        SeminarId = seminar.Id
+                    });
+                }
+            }
+
+            if (schedule)
+            {
+                if (!timespan.HasValue || timespan.Value <= DateTime.Now)
+                {
+                    return ResultData(null, false, "如果要定时发布，请选择正确的一个将来时间点！");
+                }
+
+                p.Status = Status.Schedule;
+                p.PostDate = timespan.Value.ToUniversalTime();
+                p.ModifyDate = timespan.Value.ToUniversalTime();
+                HangfireHelper.CreateJob(typeof(IHangfireBackJob), nameof(HangfireBackJob.PublishPost), args: p);
+                return ResultData(p.Mapper<PostDto>(), message: $"文章于{timespan.Value:yyyy-MM-dd HH:mm:ss}将会自动发表！");
+            }
+
+            PostService.AddEntity(p);
+            bool b = await SearchEngine.SaveChangesAsync() > 0;
+            if (!b)
+            {
+                return ResultData(null, false, "文章发表失败！");
+            }
+
+            return ResultData(null, true, "文章发表成功！");
+        }
+
+        private bool ValidatePost(PostCommand post, out ActionResult resultData)
+        {
             if (!CategoryService.Any(c => c.Id == post.CategoryId && c.Status == Status.Available))
             {
-                return ResultData(null, message: "请选择一个分类");
+                resultData = ResultData(null, false, "请选择一个分类");
+                return false;
+            }
+
+            switch (post.LimitMode)
+            {
+                case PostLimitMode.AllowRegion:
+                case PostLimitMode.ForbidRegion:
+                    if (string.IsNullOrEmpty(post.Regions))
+                    {
+                        resultData = ResultData(null, false, "请输入限制的地区");
+                        return false;
+                    }
+
+                    break;
+                case PostLimitMode.AllowRegionExceptForbidRegion:
+                case PostLimitMode.ForbidRegionExceptAllowRegion:
+                    if (string.IsNullOrEmpty(post.ExceptRegions))
+                    {
+                        resultData = ResultData(null, false, "请输入排除的地区");
+                        return false;
+                    }
+
+                    goto case PostLimitMode.AllowRegion;
             }
 
             if (string.IsNullOrEmpty(post.Label?.Trim()) || post.Label.Equals("null"))
@@ -888,146 +874,13 @@ namespace Masuit.MyBlogs.Core.Controllers
                 post.Label = post.Label.Replace("，", ",");
             }
 
-            if (!post.IsWordDocument)
-            {
-                post.ResourceName = null;
-            }
-
-            if (string.IsNullOrEmpty(post.ProtectContent) || post.ProtectContent.Equals("null", StringComparison.InvariantCultureIgnoreCase))
+            if (string.IsNullOrEmpty(post.ProtectContent?.RemoveHtmlTag()) || post.ProtectContent.Equals("null"))
             {
                 post.ProtectContent = null;
             }
 
-            post.Status = Status.Pended;
-            post.PostDate = DateTime.Now;
-            post.ModifyDate = DateTime.Now;
-            Post p = post.Mapper<Post>();
-            if (!string.IsNullOrEmpty(post.Seminars))
-            {
-                var tmp = post.Seminars.Split(',').Distinct();
-                tmp.ForEach(s =>
-                {
-                    var id = s.ToInt32();
-                    Seminar seminar = SeminarService.GetById(id);
-                    p.Seminar.Add(new SeminarPost()
-                    {
-                        Post = p,
-                        PostId = p.Id,
-                        Seminar = seminar,
-                        SeminarId = seminar.Id
-                    });
-                });
-            }
-
-            p.PostAccessRecord.Add(new PostAccessRecord()
-            {
-                AccessTime = DateTime.Today,
-                ClickCount = 0
-            });
-            if (schedule)
-            {
-                if (timespan.HasValue && timespan.Value > DateTime.Now)
-                {
-                    p.Status = Status.Schedule;
-                    p.PostDate = timespan.Value;
-                    p.ModifyDate = timespan.Value;
-                    HangfireHelper.CreateJob(typeof(IHangfireBackJob), nameof(HangfireBackJob.PublishPost), args: p);
-                    return ResultData(p.Mapper<PostOutputDto>(), message: schedule ? $"文章于{timespan.Value:yyyy-MM-dd HH:mm:ss}将会自动发表！" : "文章发表成功！");
-                }
-
-                return ResultData(null, false, "如果要定时发布，请选择正确的一个将来时间点！");
-            }
-
-            bool b = PostService.AddEntitySaved(p) != null;
-            if (b)
-            {
-                if ("false" == CommonHelper.SystemSettings["DisabledEmailBroadcast"])
-                {
-                    var cast = BroadcastService.LoadEntities(c => c.Status == Status.Subscribed).ToList();
-                    string link = Request.Scheme + "://" + Request.Host + "/" + p.Id;
-                    cast.ForEach(c =>
-                    {
-                        var ts = DateTime.Now.GetTotalMilliseconds();
-                        string content = System.IO.File.ReadAllText(_hostingEnvironment.WebRootPath + "/template/broadcast.html").Replace("{{link}}", link + "?email=" + c.Email).Replace("{{time}}", post.ModifyDate.ToString("yyyy-MM-dd HH:mm:ss")).Replace("{{title}}", post.Title).Replace("{{author}}", post.Author).Replace("{{content}}", post.Content.RemoveHtmlTag(150)).Replace("{{cancel}}", Url.Action("Subscribe", "Subscribe", new
-                        {
-                            c.Email,
-                            act = "cancel",
-                            validate = c.ValidateCode,
-                            timespan = ts,
-                            hash = (c.Email + "cancel" + c.ValidateCode + ts).AESEncrypt(AppConfig.BaiduAK)
-                        }, Request.Scheme));
-                        BackgroundJob.Schedule(() => CommonHelper.SendMail(CommonHelper.SystemSettings["Title"] + "博客有新文章发布了", content, c.Email), (p.ModifyDate - DateTime.Now));
-                    });
-                }
-
-                return ResultData(null, true, "文章发表成功！");
-            }
-
-            return ResultData(null, false, "文章发表失败！");
-        }
-
-        /// <summary>
-        /// 获取头图文章
-        /// </summary>
-        /// <returns></returns>
-        public ActionResult GetTops()
-        {
-            var list = PostService.LoadEntities<DateTime, PostOutputDto>(p => p.Status == Status.Pended && p.IsBanner, p => p.ModifyDate, false).Select(p => new
-            {
-                p.Id,
-                p.Description,
-                p.Title,
-                p.ImageUrl
-            }).ToList();
-            return ResultData(list);
-        }
-
-        /// <summary>
-        /// 获取非头图页文章
-        /// </summary>
-        /// <returns></returns>
-        public ActionResult GetNotTops()
-        {
-            var list = PostService.LoadEntitiesNoTracking(p => p.Status == Status.Pended && !p.IsBanner).GroupBy(p => p.Category.Name).Select(g => new
-            {
-                text = g.Key,
-                children = g.OrderBy(p => p.Title).Select(p => new
-                {
-                    id = p.Id,
-                    text = p.Title
-                })
-            }).ToList();
-            return ResultData(list);
-        }
-
-        /// <summary>
-        /// 添加头图页
-        /// </summary>
-        /// <param name="p"></param>
-        /// <returns></returns>
-        [HttpPost, Authority]
-        public ActionResult AddTop(PostOutputDto p)
-        {
-            Post post = PostService.GetById(p.Id);
-            post.IsBanner = true;
-            post.Description = p.Description;
-            post.ImageUrl = p.ImageUrl;
-            bool b = PostService.UpdateEntitySaved(post);
-            return ResultData(null, b, b ? "添加头图页成功" : "添加头图页失败！");
-        }
-
-        /// <summary>
-        /// 取消头图页
-        /// </summary>
-        /// <param name="id"></param>
-        /// <returns></returns>
-        [Authority, HttpPost]
-        public ActionResult RemoveTop(int id)
-        {
-            Post post = PostService.GetById(id);
-            post.IsBanner = false;
-            bool b = PostService.UpdateEntitySaved(post);
-            return ResultData(null, b, b ? "取消头图页成功" : "取消头图页失败！");
+            resultData = null;
+            return true;
         }
 
         /// <summary>
@@ -1036,11 +889,11 @@ namespace Masuit.MyBlogs.Core.Controllers
         /// <param name="id"></param>
         /// <param name="sid"></param>
         /// <returns></returns>
-        [Authority]
-        public ActionResult AddSeminar(int id, int sid)
+        [MyAuthorize]
+        public async Task<ActionResult> AddSeminar(int id, int sid)
         {
-            var post = PostService.GetById(id);
-            Seminar seminar = SeminarService.GetById(sid);
+            var post = await PostService.GetByIdAsync(id) ?? throw new NotFoundException("文章未找到");
+            Seminar seminar = await SeminarService.GetByIdAsync(sid) ?? throw new NotFoundException("专题未找到");
             post.Seminar.Add(new SeminarPost()
             {
                 Post = post,
@@ -1048,7 +901,7 @@ namespace Masuit.MyBlogs.Core.Controllers
                 SeminarId = seminar.Id,
                 PostId = post.Id
             });
-            bool b = PostService.UpdateEntitySaved(post);
+            bool b = await PostService.SaveChangesAsync() > 0;
             return ResultData(null, b, b ? $"已将文章【{post.Title}】添加到专题【{seminar.Title}】" : "添加失败");
         }
 
@@ -1058,11 +911,11 @@ namespace Masuit.MyBlogs.Core.Controllers
         /// <param name="id"></param>
         /// <param name="sid"></param>
         /// <returns></returns>
-        [Authority]
-        public ActionResult RemoveSeminar(int id, int sid)
+        [MyAuthorize]
+        public async Task<ActionResult> RemoveSeminar(int id, int sid)
         {
-            var post = PostService.GetById(id);
-            Seminar seminar = SeminarService.GetById(sid);
+            var post = await PostService.GetByIdAsync(id) ?? throw new NotFoundException("文章未找到");
+            Seminar seminar = await SeminarService.GetByIdAsync(sid) ?? throw new NotFoundException("专题未找到");
             post.Seminar.Remove(new SeminarPost()
             {
                 Post = post,
@@ -1070,7 +923,7 @@ namespace Masuit.MyBlogs.Core.Controllers
                 SeminarId = seminar.Id,
                 PostId = post.Id
             });
-            bool b = PostService.UpdateEntitySaved(post);
+            bool b = await PostService.SaveChangesAsync() > 0;
             return ResultData(null, b, b ? $"已将文章【{post.Title}】从【{seminar.Title}】专题移除" : "添加失败");
         }
 
@@ -1079,27 +932,11 @@ namespace Masuit.MyBlogs.Core.Controllers
         /// </summary>
         /// <param name="id"></param>
         /// <returns></returns>
-        [Authority]
-        public ActionResult DeleteHistory(int id)
+        [MyAuthorize]
+        public async Task<ActionResult> DeleteHistory(int id)
         {
-            bool b = PostHistoryVersionService.DeleteByIdSaved(id);
+            bool b = await PostHistoryVersionService.DeleteByIdSavedAsync(id) > 0;
             return ResultData(null, b, b ? "历史版本文章删除成功！" : "历史版本文章删除失败！");
-        }
-
-        /// <summary>
-        /// 获取文章访问密码
-        /// </summary>
-        /// <returns></returns>
-        [Authority, HttpPost]
-        public ActionResult ViewToken()
-        {
-            if (!RedisHelper.Exists("ArticleViewToken"))
-            {
-                RedisHelper.Set("ArticleViewToken", string.Empty.CreateShortToken(6));
-            }
-
-            var token = RedisHelper.Get("ArticleViewToken");
-            return ResultData(token);
         }
 
         /// <summary>
@@ -1107,62 +944,86 @@ namespace Masuit.MyBlogs.Core.Controllers
         /// </summary>
         /// <param name="id"></param>
         /// <returns></returns>
-        public ActionResult Revert(int id)
+        [MyAuthorize]
+        public async Task<ActionResult> Revert(int id)
         {
-            var history = PostHistoryVersionService.GetById(id);
-            if (history != null)
+            var history = await PostHistoryVersionService.GetByIdAsync(id) ?? throw new NotFoundException("版本不存在");
+            history.Post.Category = history.Category;
+            history.Post.CategoryId = history.CategoryId;
+            history.Post.Content = history.Content;
+            history.Post.Title = history.Title;
+            history.Post.Label = history.Label;
+            history.Post.ModifyDate = history.ModifyDate;
+            history.Post.Seminar.Clear();
+            foreach (var s in history.Seminar)
             {
-                var version = history.Post.Mapper<PostHistoryVersion>();
-                version.Id = 0;
-                PostHistoryVersionService.AddEntity(version);
-                history.Post.Category = history.Category;
-                history.Post.CategoryId = history.CategoryId;
-                history.Post.Content = history.Content;
-                history.Post.Title = history.Title;
-                history.Post.Label = history.Label;
-                history.Post.Seminar.Clear();
-                foreach (var s in history.Seminar)
+                history.Post.Seminar.Add(new SeminarPost()
                 {
-                    history.Post.Seminar.Add(new SeminarPost()
-                    {
-                        Post = history.Post,
-                        PostId = history.PostId,
-                        Seminar = s.Seminar,
-                        SeminarId = s.SeminarId
-                    });
-                }
-                history.Post.ModifyDate = history.ModifyDate;
-                bool b = PostHistoryVersionService.UpdateEntitySaved(history);
-                return ResultData(null, b, b ? "回滚成功" : "回滚失败");
+                    Post = history.Post,
+                    PostId = history.PostId,
+                    Seminar = s.Seminar,
+                    SeminarId = s.SeminarId
+                });
             }
-
-            return ResultData(null, false, "版本不存在");
+            bool b = await SearchEngine.SaveChangesAsync() > 0;
+            await PostHistoryVersionService.DeleteByIdSavedAsync(id);
+            return ResultData(null, b, b ? "回滚成功" : "回滚失败");
         }
 
         /// <summary>
-        /// 文章分析
+        /// 禁用或开启文章评论
+        /// </summary>
+        /// <param name="id">文章id</param>
+        /// <returns></returns>
+        [MyAuthorize]
+        public async Task<ActionResult> DisableComment(int id)
+        {
+            var post = await PostService.GetByIdAsync(id) ?? throw new NotFoundException("文章未找到");
+            post.DisableComment = !post.DisableComment;
+            return ResultData(null, await PostService.SaveChangesAsync() > 0, post.DisableComment ? $"已禁用【{post.Title}】这篇文章的评论功能！" : $"已启用【{post.Title}】这篇文章的评论功能！");
+        }
+
+        /// <summary>
+        /// 禁用或开启文章评论
+        /// </summary>
+        /// <param name="id">文章id</param>
+        /// <returns></returns>
+        [MyAuthorize]
+        public async Task<ActionResult> DisableCopy(int id)
+        {
+            var post = await PostService.GetByIdAsync(id) ?? throw new NotFoundException("文章未找到");
+            post.DisableCopy = !post.DisableCopy;
+            return ResultData(null, await PostService.SaveChangesAsync() > 0, post.DisableCopy ? $"已开启【{post.Title}】这篇文章的防复制功能！" : $"已关闭【{post.Title}】这篇文章的防复制功能！");
+        }
+
+        /// <summary>
+        /// 刷新文章
+        /// </summary>
+        /// <param name="id">文章id</param>
+        /// <returns></returns>
+        [MyAuthorize]
+        public async Task<ActionResult> Refresh(int id)
+        {
+            var post = await PostService.GetByIdAsync(id) ?? throw new NotFoundException("文章未找到");
+            post.ModifyDate = DateTime.Now;
+            await PostService.SaveChangesAsync();
+            return RedirectToAction("Details", new { id });
+        }
+
+        /// <summary>
+        /// 标记为恶意修改
         /// </summary>
         /// <param name="id"></param>
         /// <returns></returns>
-        [HttpPost]
-        public ActionResult Analyse(int id)
+        [MyAuthorize]
+        [HttpPost("post/block/{id}")]
+        public async Task<ActionResult> Block(int id)
         {
-            var list = PostService.GetById(id).PostAccessRecord.OrderBy(r => r.AccessTime).GroupBy(r => r.AccessTime.Date).Select(r => new[]
-            {
-                r.Key.GetTotalMilliseconds(),
-                r.Sum(p => p.ClickCount)
-            }).ToList();
-            var high = list.OrderByDescending(n => n[1]).FirstOrDefault();
-            var average = list.Average(d => d[1]);
-            return ResultData(new
-            {
-                list,
-                aver = average,
-                high = high[1],
-                highDate = DateTime.Parse("1970-01-01").AddMilliseconds(high[0])
-            });
+            var merge = await PostService.GetByIdAsync(id) ?? throw new NotFoundException("文章未找到");
+            merge.Status = Status.Forbidden;
+            var b = await PostService.SaveChangesAsync() > 0;
+            return b ? ResultData(null, true, "操作成功！") : ResultData(null, false, "操作失败！");
         }
-
         #endregion
     }
 }

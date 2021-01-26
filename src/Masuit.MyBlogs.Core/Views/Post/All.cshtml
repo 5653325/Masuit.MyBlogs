@@ -1,10 +1,8 @@
-﻿@using System.Web
-@using Masuit.MyBlogs.Core.Models.ViewModel
-@using Masuit.Tools.Win32
+﻿@using Masuit.MyBlogs.Core.Models.ViewModel
 @{
     ViewBag.Title = "分类云_标签云_专题云";
     Layout = "~/Views/Shared/_Layout.cshtml";
-    IOrderedEnumerable<IGrouping<string, string>> tags = ViewBag.tags;
+    List<IGrouping<string, string>> tags = ViewBag.tags;
     List<TagCloudViewModel> cats = ViewBag.cats;
     List<TagCloudViewModel> seminars = ViewBag.seminars;
     string[] colors = { "success", "info", "primary", "warning", "danger", "default", "primary" };
@@ -13,7 +11,7 @@
 <link href="~/Content/common/post-all.min.css" rel="stylesheet" />
 <div class="container-fluid">
     <ol class="cd-breadcrumb triangle">
-        <li>@Html.ActionLink("首页", "Index", "Home")</li>
+        <li><a asp-controller="Home" asp-action="Index">首页</a></li>
         <li class="current"><em>@ViewBag.Title</em></li>
     </ol>
     <svg id="svg-source" height="0" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" style="position: absolute">
@@ -109,7 +107,7 @@
                     @{
                         foreach (var g in cats)
                         {
-                            <a href="/cat/@g.Id" class="label label-@colors[r.StrictNext(colors.Length)]">@g.Name (@(g.Count)篇)</a>
+                            <a asp-controller="Home" asp-action="Category" asp-route-id="@g.Id" class="label label-@colors[r.Next(colors.Length)]">@g.Name (@(g.Count)篇)</a>
                         }
                     }
                 </p>
@@ -119,7 +117,7 @@
                     @{
                         foreach (var g in tags)
                         {
-                            <a href="/tag/@HttpUtility.UrlEncode(g.Key)" class="label label-@colors[r.StrictNext(colors.Length)]">@g.Key (@g.Count()篇)</a>
+                            <a asp-controller="Home" asp-action="Tag" asp-route-id="@g.Key" class="label label-@colors[r.Next(colors.Length)]">@g.Key (@g.Count()篇)</a>
                         }
                     }
                 </p>
@@ -129,7 +127,7 @@
                     @{
                         foreach (var g in seminars)
                         {
-                            <a href="/c/@g.Id" class="label label-@colors[r.StrictNext(colors.Length)]">@g.Name (@(g.Count)篇)</a>
+                            <a asp-controller="Seminar" asp-action="Index" asp-route-id="@g.Id" class="label label-@colors[r.Next(colors.Length)]">@g.Name (@(g.Count)篇)</a>
                         }
                     }
                 </p>
@@ -137,7 +135,7 @@
         </div>
     </div>
 </div>
-<script src="~/Scripts/three.min.js"></script>
+<script src="https://cdn.staticfile.org/three.js/r55/three.js"></script>
 <script src="~/Scripts/Detector.js"></script>
 <script id="vs" type="x-shader/x-vertex">
     varying vec2 vUv;

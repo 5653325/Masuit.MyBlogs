@@ -1,9 +1,12 @@
-﻿using Common;
-using Hangfire;
+﻿using Masuit.MyBlogs.Core.Common;
+using Masuit.Tools;
+using Masuit.Tools.Logging;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.DependencyInjection;
 using System;
 using System.IO;
 using System.Linq;
+using System.Threading.Tasks;
 
 namespace Masuit.MyBlogs.Core.Extensions.UEditor
 {
@@ -24,81 +27,61 @@ namespace Masuit.MyBlogs.Core.Extensions.UEditor
             };
         }
 
-        public override string Process()
+        public override async Task<string> Process()
         {
-            byte[] uploadFileBytes;
-            string uploadFileName;
+            var form = await Request.ReadFormAsync();
+            var file = form.Files[UploadConfig.UploadFieldName];
+            var uploadFileName = file.FileName;
 
-            if (UploadConfig.Base64)
+            if (!CheckFileType(uploadFileName))
             {
-                uploadFileName = UploadConfig.Base64Filename;
-                uploadFileBytes = Convert.FromBase64String(Request.Query[UploadConfig.UploadFieldName]);
+                Result.State = UploadState.TypeNotAllow;
+                return WriteResult();
             }
-            else
+            if (!CheckFileSize(file.Length))
             {
-                var file = Request.Form.Files[UploadConfig.UploadFieldName];
-                uploadFileName = file.FileName;
-
-                if (!CheckFileType(uploadFileName))
-                {
-                    Result.State = UploadState.TypeNotAllow;
-                    return WriteResult();
-                }
-                if (!CheckFileSize(file.Length))
-                {
-                    Result.State = UploadState.SizeLimitExceed;
-                    return WriteResult();
-                }
-
-                uploadFileBytes = new byte[file.Length];
-                try
-                {
-                    file.OpenReadStream().Read(uploadFileBytes, 0, (int)file.Length);
-                }
-                catch (Exception)
-                {
-                    Result.State = UploadState.NetworkError;
-                    return WriteResult();
-                }
+                Result.State = UploadState.SizeLimitExceed;
+                return WriteResult();
             }
 
             Result.OriginFileName = uploadFileName;
-
             var savePath = PathFormatter.Format(uploadFileName, UploadConfig.PathFormat);
             var localPath = AppContext.BaseDirectory + "wwwroot" + savePath;
             try
             {
-                if (!Directory.Exists(Path.GetDirectoryName(localPath)))
+                if (UploadConfig.AllowExtensions.Contains(Path.GetExtension(uploadFileName).ToLower()))
                 {
-                    Directory.CreateDirectory(Path.GetDirectoryName(localPath));
-                }
-                File.WriteAllBytes(localPath, uploadFileBytes);
-                if (UploadConfig.AllowExtensions.Contains(Path.GetExtension(localPath)))
-                {
-                    var (url, success) = CommonHelper.UploadImage(localPath);
+                    var stream = file.OpenReadStream();
+                    stream = stream.AddWatermark();
+                    var (url, success) = Startup.ServiceProvider.GetRequiredService<ImagebedClient>().UploadImage(stream, localPath).Result;
                     if (success)
                     {
                         Result.Url = url;
-                        BackgroundJob.Enqueue(() => File.Delete(localPath));
                     }
                     else
                     {
+                        Directory.CreateDirectory(Path.GetDirectoryName(localPath));
+                        File.WriteAllBytes(localPath, stream.ToArray());
                         Result.Url = savePath;
                     }
+                    Result.State = UploadState.Success;
+                    stream.Close();
+                    stream.Dispose();
                 }
                 else
                 {
-                    Result.Url = savePath;
+                    Result.State = UploadState.FileAccessError;
+                    Result.ErrorMessage = "不支持的文件格式";
                 }
-                Result.State = UploadState.Success;
             }
             catch (Exception e)
             {
                 Result.State = UploadState.FileAccessError;
                 Result.ErrorMessage = e.Message;
+                LogManager.Error(e);
             }
-            return WriteResult();
 
+            return WriteResult();
         }
 
         private string WriteResult()
@@ -133,8 +116,7 @@ namespace Masuit.MyBlogs.Core.Extensions.UEditor
 
         private bool CheckFileType(string filename)
         {
-            var fileExtension = Path.GetExtension(filename).ToLower();
-            return UploadConfig.AllowExtensions.Select(x => x.ToLower()).Contains(fileExtension);
+            return UploadConfig.AllowExtensions.Any(x => x.Equals(Path.GetExtension(filename), StringComparison.CurrentCultureIgnoreCase));
         }
 
         private bool CheckFileSize(long size)

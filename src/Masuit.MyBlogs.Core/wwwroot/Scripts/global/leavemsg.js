@@ -5,23 +5,18 @@
 			height: 150
         });
     });
-	$("#OperatingSystem").val(platform.os.toString());
-	$("#Browser").val(platform.name + " " + platform.version);
-	getmsgs();
-	var user = JSON.parse(localStorage.getItem("user"));
-	if (user) {
-		$("[name='NickName']").val(user.NickName);
-		$("[name='Email']").val(user.Email);
-		$("[name='QQorWechat']").val(user.QQorWechat);
-	}
+	$("#OperatingSystem").val(DeviceInfo.OS.toString());
+    $("#Browser").val(DeviceInfo.browserInfo.Name+" "+DeviceInfo.browserInfo.Version);
+	window.getmsgs();
+	
     //异步提交留言表单开始
     $("#msg-form").on("submit", function(e) {
         e.preventDefault();
         layui.layedit.sync(1);
-        if ($("#name").val().trim().length <= 0 || $("#name").val().trim().length > 20) {
+        if ($("#name").val().trim().length <= 0 || $("#name").val().trim().length > 24) {
 	        window.notie.alert({
 		        type: 3,
-		        text: '再怎么你也应该留个合理的名字吧，非主流的我可不喜欢！',
+		        text: '昵称要求2-24个字符！',
 		        time: 4
 	        });
             loadingDone();
@@ -84,10 +79,10 @@
     $("#reply-form").on("submit", function(e) {
         e.preventDefault();
         layui.layedit.sync(window.currentEditor);
-        if ($("#name2").val().trim().length <= 0 || $("#name").val().trim().length > 20) {
+        if ($("#name2").val().trim().length <= 0 || $("#name").val().trim().length > 24) {
 	        window.notie.alert({
 		        type: 3,
-                text: "亲，能留个正常点的名字不！",
+                text: "昵称要求2-24个字符！",
 		        time: 4
 	        });
             loadingDone();
@@ -102,8 +97,7 @@
             loadingDone();
             return;
         }
-		localStorage.setItem("user", JSON.stringify($(this).serializeObject()));
-		$.post("/Msg/Put", $(this).serialize(), (data) => {
+		window.post("/Msg/submit", $(this).serializeObject(), (data) => {
             loadingDone();
             if (data && data.Success) {
 		        window.notie.alert({
@@ -113,7 +107,7 @@
 		        });
 				layer.closeAll();
 					setTimeout(function() {
-					getmsgs();
+					window.getmsgs();
 					$("#reply").css("display", "none");
 					$("[id^=LAY_layedit]").contents().find('body').html('');
 				}, 500);
@@ -133,8 +127,7 @@
  */
 function submitComment(_this) {
     loading();
-	localStorage.setItem("user", JSON.stringify($(_this).serializeObject()));
-    $.post("/Msg/Put", $(_this).serialize(), (data) => {
+    window.post("/Msg/submit", $(_this).serializeObject(), (data) => {
         loadingDone();
         if (data && data.Success) {
 			window.notie.alert({
@@ -161,17 +154,11 @@ function bindReplyBtn() {
 	$(".msg-list article .panel-body a").on("click", function (e) {
 		e.preventDefault();
 		loadingDone();
-		var user = JSON.parse(localStorage.getItem("user"));
-		if (user) {
-			$("[name='NickName']").val(user.NickName);
-			$("[name='Email']").val(user.Email);
-			$("[name='QQorWechat']").val(user.QQorWechat);
-		}
 		var href = $(this).attr("href");
 		var uid = href.substring(href.indexOf("uid") + 4);
 		$("#uid").val(uid);
-		$("#OperatingSystem2").val(platform.os.toString());
-		$("#Browser2").val(platform.name + " " + platform.version);
+        $("#OperatingSystem2").val(DeviceInfo.OS.toString());
+        $("#Browser2").val(DeviceInfo.browserInfo.Name+" "+DeviceInfo.browserInfo.Version);
 		layui.use("layer", function() {
 			var layer = layui.layer;
 			layer.open({
@@ -191,4 +178,61 @@ function bindReplyBtn() {
 			height: 100
 		});
 	});
+}
+
+//递归加载留言
+//加载父楼层
+function loadParentMsgs(data) {
+	loading();
+	var html = '';
+	if (data) {
+		var rows = Enumerable.From(data.rows).Where(c => c.ParentId === 0).ToArray();
+		var page = data.page;
+		var size = data.size;
+		var maxPage = Math.ceil(data.total / size);
+		page = page > maxPage ? maxPage : page;
+		page = page < 1 ? 1 : page;
+		var startfloor = data.parentTotal - (page - 1) * size;
+		for (let i = 0; i < rows.length; i++) {
+			html += `<li class="msg-list media animated fadeInRight" id='${rows[i].Id}'>
+						   <div class="media-body">
+								<article class="panel panel-info">
+									<header class="panel-heading">${startfloor}# ${rows[i].IsMaster? `<i class="icon icon-user"></i>` : ""}${rows[i].NickName}${rows  [i].IsMaster ? `(管理员)` : ""} | ${rows[i].PostDate}
+										<span class="pull-right hidden-sm hidden-xs" style="font-size: 10px;">${GetOperatingSystem(rows[i].OperatingSystem) + " | " + GetBrowser(rows[i].Browser)}</span>
+									</header>
+									<div class="panel-body">
+										${rows[i].Content}
+										<a class="label label-info" href="?uid=${rows[i].Id}"><i class="icon-comment"></i></a>
+										${loadMsgs(data.rows,Enumerable.From(data.rows).Where(c => c.ParentId === rows[i].Id).OrderBy(c => c.PostDate).ToArray(), startfloor--)}
+									</div>
+								</article>
+							</div>
+						</li>`;
+		}
+	}
+	loadingDone();
+	return html;
+}
+
+//加载子楼层
+function loadMsgs(data, msg, root, depth = 0) {
+	var colors = ["info", "success", "primary", "warning", "danger"];
+	var floor = 1;
+	depth++;
+	var html = '';
+	Enumerable.From(msg).ForEach((item, index) => {
+		var color = colors[depth % 5];
+		html += `<article id="${item.Id}" class="panel panel-${color}">
+						<div class="panel-heading">
+							${depth}-${floor++}# ${item.IsMaster ? `<i class="icon icon-user"></i>` : ""}${item.NickName}${item.IsMaster ? `(管理员)` : ""} | ${item.PostDate}<span class="pull-right hidden-sm hidden-xs" style="font-size: 10px;">${GetOperatingSystem(item.OperatingSystem) + " | " + GetBrowser(item.Browser)}
+							</span>
+						</div>
+						<div class="panel-body">
+							${item.Content}
+							<a class="label label-${color}" href="?uid=${item.Id}"><i class="icon-comment"></i></a>
+							${loadMsgs(data,Enumerable.From(data).Where(c => c.ParentId === item.Id).OrderBy(c => c.PostDate),root, depth)}
+						</div>
+					</article>`;
+	});
+	return html;
 }

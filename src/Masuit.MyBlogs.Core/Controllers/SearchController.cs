@@ -1,17 +1,21 @@
-﻿using Common;
-using Masuit.LuceneEFCore.SearchEngine.Interfaces;
+﻿using CacheManager.Core;
+using Masuit.MyBlogs.Core.Common;
 using Masuit.MyBlogs.Core.Extensions;
-using Masuit.MyBlogs.Core.Infrastructure.Application;
 using Masuit.MyBlogs.Core.Infrastructure.Services.Interface;
 using Masuit.MyBlogs.Core.Models.DTO;
 using Masuit.MyBlogs.Core.Models.Entity;
+using Masuit.MyBlogs.Core.Models.Enum;
+using Masuit.MyBlogs.Core.Models.ViewModel;
+using Masuit.Tools;
+using Masuit.Tools.Core;
+using Masuit.Tools.Core.Net;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.Net.Http.Headers;
 using System;
 using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations;
 using System.Linq;
 using System.Linq.Expressions;
-using System.Text.RegularExpressions;
+using System.Threading.Tasks;
 
 namespace Masuit.MyBlogs.Core.Controllers
 {
@@ -24,21 +28,9 @@ namespace Masuit.MyBlogs.Core.Controllers
         /// 
         /// </summary>
         public ISearchDetailsService SearchDetailsService { get; set; }
-        private readonly IPostService _postService;
-        private readonly ISearchEngine<DataContext> _searchEngine;
+        public IPostService PostService { get; set; }
 
-        /// <summary>
-        /// 站内搜索
-        /// </summary>
-        /// <param name="searchDetailsService"></param>
-        /// <param name="postService"></param>
-        /// <param name="searchEngine"></param>
-        public SearchController(ISearchDetailsService searchDetailsService, IPostService postService, ISearchEngine<DataContext> searchEngine)
-        {
-            SearchDetailsService = searchDetailsService;
-            _postService = postService;
-            _searchEngine = searchEngine;
-        }
+        public ICacheManager<string> CacheManager { get; set; }
 
         /// <summary>
         /// 搜索页
@@ -47,112 +39,83 @@ namespace Masuit.MyBlogs.Core.Controllers
         /// <param name="page"></param>
         /// <param name="size"></param>
         /// <returns></returns>
-        [Route("s/{wd?}/{page:int?}/{size:int?}"), ResponseCache(VaryByQueryKeys = new[] { "wd", "page", "size" }, VaryByHeader = HeaderNames.Cookie, Duration = 600)]
-        public ActionResult Search(string wd = "", int page = 1, int size = 10)
+        [Route("s/{wd?}/{page:int?}/{size:int?}")]
+        public async Task<ActionResult> Search(string wd = "", [Range(1, int.MaxValue, ErrorMessage = "页码必须大于0")] int page = 1, [Range(1, 50, ErrorMessage = "页大小必须在0到50之间")] int size = 15)
         {
-            var nul = new List<PostOutputDto>();
-            ViewBag.Elapsed = 0;
-            ViewBag.Total = 0;
+            wd = wd?.Trim().ToSimplified();
+            ViewBag.PageSize = size;
             ViewBag.Keyword = wd;
-            if (Regex.Match(wd ?? "", CommonHelper.BanRegex + "|" + CommonHelper.ModRegex).Length > 0)
+            string key = "Search:" + ClientIP;
+            if (CacheManager.Exists(key) && CacheManager.Get(key) != wd)
             {
-                return RedirectToAction("Search");
-            }
-            var start = DateTime.Today.AddDays(-7);
-            string key = HttpContext.Connection.Id;
-            if (RedisHelper.Exists(key) && !RedisHelper.Get(key).Equals(wd))
-            {
-                var hotSearches = SearchDetailsService.LoadEntitiesFromL2CacheNoTracking(s => s.SearchTime > start, s => s.SearchTime, false).GroupBy(s => s.KeyWords.ToLower()).OrderByDescending(g => g.Count()).Take(7).Select(g => new KeywordsRankOutputDto()
-                {
-                    KeyWords = g.First().KeyWords,
-                    SearchCount = g.Count()
-                }).ToList();
+                var hotSearches = RedisHelper.Get<List<KeywordsRank>>("SearchRank:Week").Take(10).ToList();
                 ViewBag.hotSearches = hotSearches;
                 ViewBag.ErrorMsg = "10秒内只能搜索1次！";
-                return View(nul);
+                return View(new SearchResult<PostDto>());
             }
-            wd = wd.Trim().Replace("+", " ");
+
             if (!string.IsNullOrWhiteSpace(wd) && !wd.Contains("锟斤拷"))
             {
                 if (!HttpContext.Session.TryGetValue("search:" + wd, out _) && !HttpContext.Request.IsRobot())
                 {
                     SearchDetailsService.AddEntity(new SearchDetails
                     {
-                        KeyWords = wd,
+                        Keywords = wd,
                         SearchTime = DateTime.Now,
-                        IP = HttpContext.Connection.RemoteIpAddress.MapToIPv4().ToString()
+                        IP = ClientIP
                     });
+                    await SearchDetailsService.SaveChangesAsync();
                     HttpContext.Session.Set("search:" + wd, wd.ToByteArray());
                 }
-                var posts = _postService.SearchPage(page, size, wd);
-                ViewBag.Elapsed = posts.Elapsed;
-                ViewBag.Total = posts.Total;
-                SearchDetailsService.SaveChanges();
+
+                var posts = PostService.SearchPage(page, size, wd);
                 if (posts.Total > 1)
                 {
-                    RedisHelper.Set(key, wd);
-                    RedisHelper.Expire(key, TimeSpan.FromSeconds(10));
+                    CacheManager.AddOrUpdate(key, wd, s => wd);
+                    CacheManager.Expire(key, TimeSpan.FromSeconds(10));
+                    ViewBag.Ads = AdsService.GetByWeightedPrice(AdvertiseType.PostList);
                 }
-                ViewBag.hotSearches = new List<KeywordsRankOutputDto>();
-                return View(posts.Results);
+
+                ViewBag.hotSearches = new List<KeywordsRank>();
+                return View(posts);
             }
-            ViewBag.hotSearches = SearchDetailsService.LoadEntitiesFromL2CacheNoTracking(s => s.SearchTime > start, s => s.SearchTime, false).GroupBy(s => s.KeyWords.ToLower()).OrderByDescending(g => g.Count()).Take(7).Select(g => new KeywordsRankOutputDto()
-            {
-                KeyWords = g.FirstOrDefault().KeyWords,
-                SearchCount = g.Count()
-            }).ToList();
-            return View(nul);
+
+            ViewBag.hotSearches = RedisHelper.Get<List<KeywordsRank>>("SearchRank:Week").Take(10).ToList();
+            return View(new SearchResult<PostDto>());
         }
 
         /// <summary>
-        /// 关键词推荐
+        /// 关键词搜索记录
         /// </summary>
         /// <param name="page"></param>
         /// <param name="size"></param>
         /// <param name="search"></param>
         /// <returns></returns>
-        [Authority, HttpPost, ResponseCache(Duration = 600, VaryByQueryKeys = new[] { "page", "size", "search" }, VaryByHeader = HeaderNames.Cookie)]
-        public ActionResult SearchList(int page = 1, int size = 10, string search = "")
+        [MyAuthorize, HttpPost, ResponseCache(Duration = 600, VaryByQueryKeys = new[] { "page", "size", "search" }, VaryByHeader = "Cookie")]
+        public ActionResult SearchList([Range(1, int.MaxValue, ErrorMessage = "页码必须大于0")] int page = 1, [Range(1, 50, ErrorMessage = "页大小必须在0到50之间")] int size = 15, string search = "")
         {
-            if (page <= 0)
+            var where = string.IsNullOrEmpty(search) ? (Expression<Func<SearchDetails, bool>>)(s => true) : s => s.Keywords.Contains(search);
+            var pages = SearchDetailsService.GetPages<DateTime, SearchDetailsDto>(page, size, where, s => s.SearchTime, false);
+            foreach (var item in pages.Data)
             {
-                page = 1;
+                item.SearchTime = item.SearchTime.ToTimeZone(HttpContext.Session.Get<string>(SessionKey.TimeZone));
             }
-            var where = string.IsNullOrEmpty(search) ? (Expression<Func<SearchDetails, bool>>)(s => true) : s => s.KeyWords.Contains(search);
-            var list = SearchDetailsService.LoadPageEntities<DateTime, SearchDetailsOutputDto>(page, size, out int total, where, s => s.SearchTime, false).ToList();
-            var pageCount = Math.Ceiling(total * 1.0 / size).ToInt32();
-            return PageResult(list, pageCount, total);
+
+            return Ok(pages);
         }
 
         /// <summary>
         /// 热词
         /// </summary>
         /// <returns></returns>
-        [Authority, HttpPost, ResponseCache(Duration = 600, VaryByHeader = HeaderNames.Cookie)]
+        [MyAuthorize, HttpPost, ResponseCache(Duration = 600, VaryByHeader = "Cookie")]
         public ActionResult HotKey()
         {
-            var start = DateTime.Today.AddMonths(-1);
-            var temp = SearchDetailsService.LoadEntitiesNoTracking(s => s.SearchTime > start, s => s.SearchTime, false).ToList();
-            var month = temp.GroupBy(s => s.KeyWords.ToLower()).OrderByDescending(g => g.Count()).Take(30).Select(g => new
-            {
-                Keywords = g.FirstOrDefault().KeyWords,
-                Count = g.Count()
-            }).ToList();
-            var week = temp.Where(s => s.SearchTime > DateTime.Today.AddDays(-7)).GroupBy(s => s.KeyWords.ToLower()).OrderByDescending(g => g.Count()).Take(30).Select(g => new
-            {
-                Keywords = g.FirstOrDefault().KeyWords,
-                Count = g.Count()
-            }).ToList();
-            var today = temp.Where(s => s.SearchTime > DateTime.Today).GroupBy(s => s.KeyWords.ToLower()).OrderByDescending(g => g.Count()).Take(30).Select(g => new
-            {
-                Keywords = g.FirstOrDefault().KeyWords,
-                Count = g.Count()
-            }).ToList();
             return ResultData(new
             {
-                month,
-                week,
-                today
+                month = RedisHelper.Get<List<KeywordsRank>>("SearchRank:Month"),
+                week = RedisHelper.Get<List<KeywordsRank>>("SearchRank:Week"),
+                today = RedisHelper.Get<List<KeywordsRank>>("SearchRank:Today")
             });
         }
 
@@ -161,10 +124,10 @@ namespace Masuit.MyBlogs.Core.Controllers
         /// </summary>
         /// <param name="id"></param>
         /// <returns></returns>
-        [HttpPost, Authority]
-        public ActionResult Delete(int id)
+        [HttpPost, MyAuthorize]
+        public async Task<ActionResult> Delete(int id)
         {
-            bool b = SearchDetailsService.DeleteByIdSaved(id);
+            bool b = await SearchDetailsService.DeleteByIdSavedAsync(id) > 0;
             return ResultData(null, b, b ? "删除成功！" : "删除失败！");
         }
     }

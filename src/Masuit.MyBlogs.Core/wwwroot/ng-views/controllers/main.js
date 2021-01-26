@@ -1,5 +1,4 @@
 ﻿myApp.controller('main', ["$timeout", "$state", "$scope", "$http", function($timeout, $state, $scope, $http) {
-	window.hub = new signalR.HubConnectionBuilder().withUrl("/hubs").build();
 	$scope.post = {};
 	Waves.init();
 	iziToast.settings({
@@ -19,37 +18,11 @@
 		// transitionIn: 'flipInX',
 		// transitionOut: 'flipOutX',
 	});
-	ifvisible.blur(function() {
-		$("body").animate({
-			opacity:0.5
-		}, 100);
-	});
-	ifvisible.wakeup(function() {
-		$("body").animate({
-			opacity:1
-		}, 100);
-	});
 	localStorage.setItem('ma-layout-status', 1);
 	if(/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)) {
 		angular.element('html').addClass('ismobile');
 	}
-
-	Highcharts.setOptions({
-		global:{
-			timezoneOffset:0
-		},
-		colors:['#058DC7', '#50B432', '#ED561B', '#DDDF00', '#24CBE5', '#64E572', '#FF9655', '#FFF263', '#6AF9C4',
-			'#F44336',
-			'#E91E63', '#9C27B0', '#673AB7', '#3F51B5', '#2196F3', '#03A9F4', '#00BCD4', '#009688', '#4CAF50',
-			'#8BC34A',
-			'#CDDC39', '#FFEB3B', '#FFC107', '#FF9800', '#FF5722', '#d95548', '#9E0E9E', '#6f7D8B', '#0aaaea',
-			'#f7aa67',
-			'#e1622f', '#fd7d36', ' #fe9778', '#ff9b6a', '#f3d64e', '#f1b8e4', '#d9b8f1', ' #f1ccb8', '#f1f1b8',
-			'#b8f1ed',
-			'#b8f1cc', '#CDDC39', '#e7dac9', '#FFC107', '#FF9800', '#fa7497', '#f9b747', '#dcff93', '#b7d28d',
-			' #f2debd',
-			'#b7d28d']
-	});
+	
 	this.sidebarToggle = {
 		left:false,
 		right:false
@@ -89,7 +62,7 @@
 		'orange',
 		'blue',
 		'purple'
-	]
+	];
 
 	this.skinSwitch = function(color) {
 		this.currentSkin = color;
@@ -126,7 +99,7 @@
 							z.remove();
 						});
 					}, w += 150);
-				})
+				});
 
 				$timeout(function() {
 					angular.element('#notifications').addClass('empty');
@@ -184,23 +157,6 @@
 		}
 	}
 
-	//两个全局加载动画
-	$scope.isloading = false;
-	$scope.loading = function() {
-		if($scope.isloading) {
-			return;
-		}
-		$scope.isloading = true;
-		let r = new Date().getMilliseconds();
-		$(".loading" + (r % 2 + 1)).show();
-	}
-
-	$scope.loadingDone = function() {
-		$scope.isloading = false;
-		$(".loading1").hide();
-		$(".loading2").hide();
-		//$(".loading3").hide();
-	}
 	$http.post("/passport/getuserinfo", null).then(function(res) {
 		if(res.data.Success) {
 			$scope.user = res.data.Data;
@@ -208,12 +164,43 @@
 	});
 
 	$scope.request = function(url, data, success, error) {
-		$scope.loading();
 		$http.post(url, data, {
 			'Content-Type':'application/x-www-form-urlencoded'
 		}).then(function(res) {
-			$scope.loadingDone();
 			if(res.data.Success && res.data.IsLogin) {
+				success(res.data);
+			} else {
+				if(error) {
+					error(res.data);
+				} else {
+					window.notie.alert({
+						type:3,
+						text:res.data.Message,
+						time:4
+					});
+				}
+				$scope.CheckLogin(res.data);
+			}
+		}, function(e) {
+            if (e.data) {
+                window.notie.alert({
+				    type:3,
+				    text:e.data.Message,
+				    time:4
+			    });
+            } else {
+                window.notie.alert({
+				    type:3,
+				    text:'服务请求失败！',
+				    time:4
+			    });
+            }
+		});
+	}
+
+	$scope.get = function(url, success, error) {
+		$http.get(url).then(function(res) {
+			if(res.data.Success) {
 				success(res.data);
 			} else {
 				if(error) {
@@ -233,9 +220,9 @@
 				text:'服务请求失败！',
 				time:4
 			});
-			$scope.loadingDone();
 		});
 	}
+
 	this.request = $scope.request;
 	$scope.CheckLogin = function(data) {
 		if(!data.IsLogin) {
@@ -288,8 +275,6 @@
 	$scope.read = function(id) {
 		$http.post("/msg/read", {
 			id
-		}).then(function(res) {
-
 		});
 	}
 	$scope.changeUsername = function() {
@@ -362,82 +347,41 @@
 			}
 		}).catch(swal.noop);
 	}
-	$scope.changeAvatar = function() {
-		swal({
-			title:'请选择一张图片作为新头像',
-			input:'file',
-			showCloseButton:true,
-			confirmButtonColor:"#DD6B55",
-			confirmButtonText:"确定",
-			cancelButtonText:"取消",
-			showLoaderOnConfirm:true,
-			animation:true,
-			allowOutsideClick:false,
-			inputAttributes:{
-				accept:'image/*'
-			},
-			preConfirm:function(value) {
-				return new Promise(function(resolve, reject) {
-					if(value) {
-						var reader = new FileReader;
-						reader.onload = function(e) {
-							swal({
-								title:"上传预览",
-								text:"确认后将开始上传并应用设置！",
-								imageUrl:e.target.result,
-								showCancelButton:true,
-								confirmButtonColor:'#3085d6',
-								cancelButtonColor:'#d33',
-								confirmButtonText:'开始上传',
-								cancelButtonText:'取消',
-								showLoaderOnConfirm:true,
-								preConfirm:function() {
-									return new Promise(function(resolve) {
-										$http.post("/upload/DecodeDataUri", {
-											data:e.target.result
-										}).then(function(res) {
-											resolve(res.data);
-										});
-									});
-								}
-							}).then(function(data) {
-								if(data.Success) {
-									$http.post("/user/changeavatar", {
-										id:$scope.user.Id,
-										path:data.Data
-									}).then(function(res2) {
-										resolve([data, res2.data]);
-									}, function(error) {
-										reject("请求失败，错误码：" + error.status);
-									});
-								} else {
-									reject(data.Message);
-								}
-							}, function(error) {
-								reject("请求失败，错误码：" + error.status);
-							}).catch(swal.noop);
-						};
-						reader.readAsDataURL(value);
-					} else {
-						reject('请选择图片');
-					}
-				});
-			},
-			inputValidator:function(value) {
-				return new Promise(function(resolve, reject) {
-					if(value) {
-						resolve();
-					} else {
-						reject('请选择图片');
-					}
-				});
-			}
-		}).then(function(data) {
-			$scope.$apply(function() {
-				$scope.user.Avatar = data[0].Data;
+	$scope.submit = function() {
+        var form = new FormData(document.getElementById("fileform"));
+		$http({
+            url: "upload",
+            method: "post",
+            data: form,
+            transformRequest: angular.identity,
+            headers: {
+                'Content-Type': undefined
+            }
+        }).then(function(response) {
+            $http.post("/user/changeavatar", {
+				id:$scope.user.Id,
+				path:response.data.Data
+			}).then(function(res2) {
+				swal("头像修改成功", "", "success");
+				layer.closeAll();
+			}, function(error) {
+				swal("头像修改失败", "请求失败，错误码：" + error.status, "error");
 			});
-			swal(data[1].Message, "", "success");
-		}).catch(swal.noop);
+        }, function(response) {
+			swal("头像修改失败", "", "error");
+        });
+    };
+	
+	$scope.changeAvatar = function() {
+		layui.use("layer", function() {
+		    var layer = layui.layer;
+		    layer.open({
+                type: 1,
+                title: '上传新头像',
+			    area: ['420px', '150px'], //宽高
+                content: $("#upfile")
+		    });
+	    });
 	}
 	$scope.changePassword = function() {
 		swal({
@@ -515,8 +459,7 @@
 }]);
 
 function getFile(obj, inputName) {
-	var file_name = $(obj).val();
-	console.log(file_name);
+	var file_name = $(obj)[0].files[0].name;
 	$("input[name='" + inputName + "']").val(file_name);
 }
 

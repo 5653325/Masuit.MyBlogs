@@ -37,8 +37,8 @@ body {
 
 /*#endregion */
 
-.min-height780 {
-    min-height: 758px;
+.min-height610 {
+    min-height: 610px;
 }
 .footer {
     margin-top: 10px;
@@ -53,6 +53,7 @@ body {
 }
 .footer a {
     color: wheat;
+    text-shadow: 1px 1px 1px #000;
 }
 .footer a:hover {
     text-decoration: underline;
@@ -323,6 +324,17 @@ Custom bottom spacer
 .text-white {
     color: white;
 }
+.text-focus {
+    background-color: yellow;
+    color: red;
+    font-size: 22px !important;
+    -ms-border-radius: 5px;
+    border-radius: 5px;
+    border: dotted 3px red;
+    padding: 5px;
+    box-shadow: grey 0px 3px 15px;
+}
+
 .inline {
     display: inline !important;
 }
@@ -504,3 +516,8 @@ Custom bottom spacer
             color: #fff;
             background: #0099ff;
         }
+.container p,.container-fluid p {
+    font-size: 16px;
+    line-height: 22px;
+    word-break: break-all;
+}

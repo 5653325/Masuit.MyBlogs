@@ -1,19 +1,29 @@
-﻿using AutoMapper.QueryableExtensions;
-using EFSecondLevelCache.Core;
+﻿using Masuit.MyBlogs.Core.Common;
 using Masuit.MyBlogs.Core.Extensions;
+using Masuit.MyBlogs.Core.Infrastructure.Repository;
 using Masuit.MyBlogs.Core.Infrastructure.Services.Interface;
+using Masuit.MyBlogs.Core.Models;
 using Masuit.MyBlogs.Core.Models.DTO;
 using Masuit.MyBlogs.Core.Models.Entity;
 using Masuit.MyBlogs.Core.Models.Enum;
 using Masuit.MyBlogs.Core.Models.ViewModel;
 using Masuit.Tools;
+using Masuit.Tools.Core.Net;
+using Masuit.Tools.Linq;
+using Masuit.Tools.Models;
+using Masuit.Tools.Systems;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Net.Http.Headers;
 using System;
 using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations;
 using System.Linq;
+using System.Linq.Dynamic.Core;
 using System.Linq.Expressions;
+using System.Runtime.InteropServices;
 using System.Threading.Tasks;
+using Z.EntityFramework.Plus;
 
 namespace Masuit.MyBlogs.Core.Controllers
 {
@@ -33,19 +43,9 @@ namespace Masuit.MyBlogs.Core.Controllers
         public ICategoryService CategoryService { get; set; }
 
         /// <summary>
-        /// 搜索关键词推荐
-        /// </summary>
-        public ISearchDetailsService SearchDetailsService { get; set; }
-
-        /// <summary>
         /// 网站公告
         /// </summary>
         public INoticeService NoticeService { get; set; }
-
-        /// <summary>
-        /// 文章访问统计
-        /// </summary>
-        public IPostAccessRecordService PostAccessRecordService { get; set; }
 
         /// <summary>
         /// 快速分享
@@ -55,48 +55,23 @@ namespace Masuit.MyBlogs.Core.Controllers
         /// <summary>
         /// 首页
         /// </summary>
-        /// <param name="postService"></param>
-        /// <param name="categoryService"></param>
-        /// <param name="searchDetailsService"></param>
-        /// <param name="noticeService"></param>
-        /// <param name="postAccessRecordService"></param>
-        /// <param name="fastShareService"></param>
-        public HomeController(IPostService postService, ICategoryService categoryService, ISearchDetailsService searchDetailsService, INoticeService noticeService, IPostAccessRecordService postAccessRecordService, IFastShareService fastShareService)
-        {
-            CategoryService = categoryService;
-            PostService = postService;
-            SearchDetailsService = searchDetailsService;
-            NoticeService = noticeService;
-            PostAccessRecordService = postAccessRecordService;
-            FastShareService = fastShareService;
-        }
-
-        /// <summary>
-        /// 首页
-        /// </summary>
-        /// <param name="orderBy"></param>
         /// <returns></returns>
-        [ResponseCache(Duration = 600, VaryByQueryKeys = new[] { "orderBy" }, VaryByHeader = HeaderNames.Cookie)]
-        public ActionResult Index(OrderBy orderBy = OrderBy.ModifyDate)
+        [HttpGet, ResponseCache(Duration = 600, VaryByHeader = "Cookie", Location = ResponseCacheLocation.Any)]
+        public async Task<ActionResult> Index()
         {
-            ViewBag.Total = 0;
-            UserInfoOutputDto user = HttpContext.Session.GetByRedis<UserInfoOutputDto>(SessionKey.UserInfo) ?? new UserInfoOutputDto();
-            var tops = PostService.LoadEntitiesFromL2CacheNoTracking(t => t.Status == Status.Pended && t.IsBanner, p => p.ModifyDate, false).Select(p => new
-            {
-                p.Title,
-                p.Description,
-                p.Id,
-                p.ImageUrl
-            }).ToList();
-            List<FastShare> fastShares = FastShareService.GetAllFromL2CacheNoTracking(s => s.Sort).ToList();
-            ViewBag.FastShare = fastShares;
-            var viewModel = GetIndexPageViewModel(1, 15, orderBy, user);
-            var banner = new List<PostOutputDto>();
-            tops.ForEach(t =>
-            {
-                banner.Add(t.MapTo<PostOutputDto>());
-            });
-            viewModel.Banner = banner;
+            var banners = AdsService.GetsByWeightedPrice(8, AdvertiseType.Banner).OrderBy(a => Guid.NewGuid()).ToList();
+            var fastShares = await FastShareService.GetAllFromCacheAsync(s => s.Sort);
+            var postsQuery = PostService.GetQuery<PostDto>(p => p.Status == Status.Published); //准备文章的查询
+            var posts = await postsQuery.Where(p => !p.IsFixedTop).OrderBy(OrderBy.ModifyDate.GetDisplay() + " desc").ToCachedPagedListAsync(1, 15);
+            posts.Data.InsertRange(0, postsQuery.Where(p => p.IsFixedTop).OrderByDescending(p => p.ModifyDate).ToList());
+            CheckPermission(posts);
+            var viewModel = await GetIndexPageViewModel();
+            viewModel.Banner = banners;
+            viewModel.Posts = posts;
+            ViewBag.FastShare = fastShares.ToList();
+            viewModel.PageParams = new Pagination(1, 15, posts.TotalCount, OrderBy.ModifyDate);
+            viewModel.SidebarAds = AdsService.GetsByWeightedPrice(2, AdvertiseType.SideBar);
+            viewModel.ListAdvertisement = AdsService.GetByWeightedPrice(AdvertiseType.PostList);
             return View(viewModel);
         }
 
@@ -107,12 +82,22 @@ namespace Masuit.MyBlogs.Core.Controllers
         /// <param name="size"></param>
         /// <param name="orderBy"></param>
         /// <returns></returns>
-        [Route("p/{page:int?}/{size:int?}/{orderBy:int?}"), ResponseCache(Duration = 600, VaryByQueryKeys = new[] { "page", "size", "orderBy" }, VaryByHeader = HeaderNames.Cookie)]
-        public ActionResult Post(int page = 1, int size = 15, OrderBy orderBy = OrderBy.ModifyDate)
+        [Route("p"), ResponseCache(Duration = 600, VaryByQueryKeys = new[] { "page", "size", "orderBy" }, VaryByHeader = "Cookie")]
+        public async Task<ActionResult> Post([Optional] OrderBy? orderBy, [Range(1, int.MaxValue, ErrorMessage = "页码必须大于0")] int page = 1, [Range(1, 50, ErrorMessage = "页大小必须在0到50之间")] int size = 15)
         {
-            UserInfoOutputDto user = HttpContext.Session.GetByRedis<UserInfoOutputDto>(SessionKey.UserInfo) ?? new UserInfoOutputDto();
-            ViewBag.Total = PostService.LoadEntitiesFromL2Cache<PostOutputDto>(p => p.Status == Status.Pended || user.IsAdmin && !p.IsFixedTop).Count(p => !p.IsFixedTop);
-            var viewModel = GetIndexPageViewModel(page, size, orderBy, user);
+            var viewModel = await GetIndexPageViewModel();
+            var postsQuery = PostService.GetQuery<PostDto>(p => p.Status == Status.Published); //准备文章的查询
+            var posts = await postsQuery.Where(p => !p.IsFixedTop).OrderBy((orderBy ?? OrderBy.ModifyDate).GetDisplay() + " desc").ToCachedPagedListAsync(page, size);
+            if (page == 1)
+            {
+                posts.Data.InsertRange(0, postsQuery.Where(p => p.IsFixedTop).OrderByDescending(p => p.ModifyDate).ToList());
+            }
+
+            CheckPermission(posts);
+            viewModel.Posts = posts;
+            viewModel.PageParams = new Pagination(page, size, posts.TotalCount, orderBy);
+            viewModel.SidebarAds = AdsService.GetsByWeightedPrice(2, AdvertiseType.SideBar);
+            viewModel.ListAdvertisement = AdsService.GetByWeightedPrice(AdvertiseType.PostList);
             return View(viewModel);
         }
 
@@ -124,37 +109,42 @@ namespace Masuit.MyBlogs.Core.Controllers
         /// <param name="size"></param>
         /// <param name="orderBy"></param>
         /// <returns></returns>
-        [Route("tag/{id}/{page:int?}/{size:int?}/{orderBy:int?}"), ResponseCache(Duration = 600, VaryByQueryKeys = new[] { "id", "page", "size", "orderBy" }, VaryByHeader = HeaderNames.Cookie)]
-        public ActionResult Tag(string id, int page = 1, int size = 15, OrderBy orderBy = OrderBy.ModifyDate)
+        [Route("tag/{id}"), ResponseCache(Duration = 600, VaryByQueryKeys = new[] { "page", "size", "orderBy" }, VaryByHeader = "Cookie")]
+        public async Task<ActionResult> Tag(string id, [Optional] OrderBy? orderBy, [Range(1, int.MaxValue, ErrorMessage = "页码必须大于0")] int page = 1, [Range(1, 50, ErrorMessage = "页大小必须在0到50之间")] int size = 15)
         {
-            IList<PostOutputDto> posts;
-            UserInfoOutputDto user = HttpContext.Session.GetByRedis<UserInfoOutputDto>(SessionKey.UserInfo) ?? new UserInfoOutputDto();
-            var temp = PostService.LoadEntities<PostOutputDto>(p => p.Label.Contains(id) && (p.Status == Status.Pended || user.IsAdmin)).OrderByDescending(p => p.IsFixedTop);
-            switch (orderBy)
-            {
-                case OrderBy.CommentCount:
-                    posts = temp.ThenByDescending(p => p.Comment.Count).Skip(size * (page - 1)).Take(size).Cacheable().ToList();
-                    break;
-                case OrderBy.PostDate:
-                    posts = temp.ThenByDescending(p => p.PostDate).Skip(size * (page - 1)).Take(size).Cacheable().ToList();
-                    break;
-                case OrderBy.ViewCount:
-                    posts = temp.ThenByDescending(p => p.TotalViewCount).Skip(size * (page - 1)).Take(size).Cacheable().ToList();
-                    break;
-                case OrderBy.VoteCount:
-                    posts = temp.ThenByDescending(p => p.VoteUpCount).Skip(size * (page - 1)).Take(size).Cacheable().ToList();
-                    break;
-                case OrderBy.AverageViewCount:
-                    posts = temp.ThenByDescending(p => p.AverageViewCount).Skip(size * (page - 1)).Take(size).Cacheable().ToList();
-                    break;
-                default:
-                    posts = temp.ThenByDescending(p => p.ModifyDate).Skip(size * (page - 1)).Take(size).Cacheable().ToList();
-                    break;
-            }
-            var viewModel = GetIndexPageViewModel(1, 1, orderBy, user);
-            ViewBag.Total = temp.Count();
+            var posts = await PostService.GetQuery<PostDto>(p => p.Label.Contains(id) && p.Status == Status.Published).OrderBy($"{nameof(PostDto.IsFixedTop)} desc,{(orderBy ?? OrderBy.ModifyDate).GetDisplay()} desc").ToCachedPagedListAsync(page, size);
+            CheckPermission(posts);
+            var viewModel = await GetIndexPageViewModel();
             ViewBag.Tag = id;
             viewModel.Posts = posts;
+            viewModel.PageParams = new Pagination(page, size, posts.TotalCount, orderBy);
+            viewModel.SidebarAds = AdsService.GetsByWeightedPrice(2, AdvertiseType.SideBar);
+            viewModel.ListAdvertisement = AdsService.GetByWeightedPrice(AdvertiseType.PostList);
+            return View(viewModel);
+        }
+
+        /// <summary>
+        /// 作者文章页
+        /// </summary>
+        /// <param name="author"></param>
+        /// <param name="page"></param>
+        /// <param name="size"></param>
+        /// <param name="orderBy"></param>
+        /// <returns></returns>
+        [Route("author/{author}"), ResponseCache(Duration = 600, VaryByQueryKeys = new[] { "page", "size", "orderBy" }, VaryByHeader = "Cookie")]
+        public async Task<ActionResult> Author(string author, [Optional] OrderBy? orderBy, [Range(1, int.MaxValue, ErrorMessage = "页码必须大于0")] int page = 1, [Range(1, 50, ErrorMessage = "页大小必须在0到50之间")] int size = 15)
+        {
+            Expression<Func<Post, bool>> where = p => p.Author.Equals(author) || p.Modifier.Equals(author) || p.Email.Equals(author) || p.PostHistoryVersion.Any(v => v.Modifier.Equals(author) || v.ModifierEmail.Equals(author));
+            where = where.And(p => p.Status == Status.Published);
+            var posts = PostService.GetQuery<PostDto>(where).OrderBy($"{nameof(PostDto.IsFixedTop)} desc,{(orderBy ?? OrderBy.ModifyDate).GetDisplay()} desc").ToCachedPagedList(page, size);
+            CheckPermission(posts);
+            var viewModel = await GetIndexPageViewModel();
+            ViewBag.Author = author;
+            ViewBag.Total = posts.TotalCount;
+            viewModel.Posts = posts;
+            viewModel.PageParams = new Pagination(page, size, posts.TotalCount, orderBy);
+            viewModel.SidebarAds = AdsService.GetsByWeightedPrice(2, AdvertiseType.SideBar);
+            viewModel.ListAdvertisement = AdsService.GetByWeightedPrice(AdvertiseType.PostList);
             return View(viewModel);
         }
 
@@ -166,137 +156,105 @@ namespace Masuit.MyBlogs.Core.Controllers
         /// <param name="size"></param>
         /// <param name="orderBy"></param>
         /// <returns></returns>
-        [Route("cat/{id:int}"), ResponseCache(Duration = 600, VaryByQueryKeys = new[] { "id", "page", "size", "orderBy" }, VaryByHeader = HeaderNames.Cookie)]
-        [Route("cat/{id:int}/{page:int?}/{size:int?}/{orderBy:int?}")]
-        public async Task<ActionResult> Category(int id, int page = 1, int size = 15, OrderBy orderBy = OrderBy.ModifyDate)
+        [Route("cat/{id:int}"), ResponseCache(Duration = 600, VaryByQueryKeys = new[] { "page", "size", "orderBy" }, VaryByHeader = "Cookie")]
+        public async Task<ActionResult> Category(int id, [Optional] OrderBy? orderBy, [Range(1, int.MaxValue, ErrorMessage = "页码必须大于0")] int page = 1, [Range(1, 50, ErrorMessage = "页大小必须在0到50之间")] int size = 15)
         {
-            UserInfoOutputDto user = HttpContext.Session.GetByRedis<UserInfoOutputDto>(SessionKey.UserInfo) ?? new UserInfoOutputDto();
-            var cat = await CategoryService.GetByIdAsync(id).ConfigureAwait(true);
-            if (cat is null) return RedirectToAction("Index", "Error");
-            var posts = PostService.LoadEntitiesNoTracking(p => p.CategoryId == cat.Id && (p.Status == Status.Pended || user.IsAdmin)).OrderByDescending(p => p.IsFixedTop);
-            ViewBag.Total = posts.Count();
-            switch (orderBy)
-            {
-                case OrderBy.CommentCount:
-                    posts = posts.ThenByDescending(p => p.Comment.Count);
-                    break;
-                case OrderBy.PostDate:
-                    posts = posts.ThenByDescending(p => p.PostDate);
-                    break;
-                case OrderBy.ViewCount:
-                    posts = posts.ThenByDescending(p => p.TotalViewCount);
-                    break;
-                case OrderBy.VoteCount:
-                    posts = posts.ThenByDescending(p => p.VoteUpCount);
-                    break;
-                case OrderBy.AverageViewCount:
-                    posts = posts.ThenByDescending(p => p.AverageViewCount);
-                    break;
-                default:
-                    posts = posts.ThenByDescending(p => p.ModifyDate);
-                    break;
-            }
-            var viewModel = GetIndexPageViewModel(1, 1, orderBy, user);
-            ViewBag.CategoryName = cat.Name;
-            ViewBag.Desc = cat.Description;
-            viewModel.Posts = posts.Skip(size * (page - 1)).Take(size).ProjectTo<PostOutputDto>().Cacheable().ToList();
+            var cat = await CategoryService.GetByIdAsync(id) ?? throw new NotFoundException("文章分类未找到");
+            var posts = PostService.GetQuery<PostDto>(p => p.CategoryId == cat.Id && p.Status == Status.Published).OrderBy($"{nameof(PostDto.IsFixedTop)} desc,{(orderBy ?? OrderBy.ModifyDate).GetDisplay()} desc").ToCachedPagedList(page, size);
+            CheckPermission(posts);
+            var viewModel = await GetIndexPageViewModel();
+            viewModel.Posts = posts;
+            ViewBag.Category = cat;
+            viewModel.PageParams = new Pagination(page, size, posts.TotalCount, orderBy);
+            viewModel.SidebarAds = AdsService.GetsByWeightedPrice(2, AdvertiseType.SideBar, id);
+            viewModel.ListAdvertisement = AdsService.GetByWeightedPrice(AdvertiseType.PostList, id);
             return View(viewModel);
+        }
+
+        [Route("lang/{lang}")]
+        public ActionResult SetLang(string lang)
+        {
+            Response.Cookies.Append("lang", lang, new CookieOptions()
+            {
+                Expires = DateTime.Now.AddYears(1),
+            });
+            var referer = Request.Headers[HeaderNames.Referer].ToString();
+            return Redirect(string.IsNullOrEmpty(referer) ? "/" : referer);
+        }
+
+        private void CheckPermission(PagedList<PostDto> posts)
+        {
+            var location = Request.Location() + "|" + Request.Headers[HeaderNames.UserAgent];
+            posts.Data.RemoveAll(p =>
+            {
+                switch (p.LimitMode)
+                {
+                    case PostLimitMode.AllowRegion:
+                        return !location.Contains(p.Regions.Split(',', StringSplitOptions.RemoveEmptyEntries)) && !CurrentUser.IsAdmin && !VisitorTokenValid && !Request.IsRobot();
+                    case PostLimitMode.ForbidRegion:
+                        return location.Contains(p.Regions.Split(',', StringSplitOptions.RemoveEmptyEntries)) && !CurrentUser.IsAdmin && !VisitorTokenValid && !Request.IsRobot();
+                    case PostLimitMode.AllowRegionExceptForbidRegion:
+                        if (location.Contains(p.ExceptRegions.Split(',', StringSplitOptions.RemoveEmptyEntries)) && !CurrentUser.IsAdmin && !VisitorTokenValid)
+                        {
+                            return true;
+                        }
+
+                        goto case PostLimitMode.AllowRegion;
+                    case PostLimitMode.ForbidRegionExceptAllowRegion:
+                        if (location.Contains(p.ExceptRegions.Split(',', StringSplitOptions.RemoveEmptyEntries)) && !CurrentUser.IsAdmin && !VisitorTokenValid)
+                        {
+                            return false;
+                        }
+
+                        goto case PostLimitMode.ForbidRegion;
+                    default:
+                        return false;
+                }
+            });
+            foreach (var item in posts.Data)
+            {
+                item.PostDate = item.PostDate.ToTimeZone(HttpContext.Session.Get<string>(SessionKey.TimeZone));
+                item.ModifyDate = item.ModifyDate.ToTimeZone(HttpContext.Session.Get<string>(SessionKey.TimeZone));
+            }
         }
 
         /// <summary>
         /// 获取页面视图模型
         /// </summary>
-        /// <param name="page"></param>
-        /// <param name="size"></param>
-        /// <param name="orderBy"></param>
-        /// <param name="user"></param>
         /// <returns></returns>
-        private IndexPageViewModel GetIndexPageViewModel(int page, int size, OrderBy orderBy, UserInfoOutputDto user)
+        private async Task<HomePageViewModel> GetIndexPageViewModel()
         {
-            IQueryable<PostOutputDto> postList = PostService.LoadEntities<PostOutputDto>(p => (p.Status == Status.Pended || user.IsAdmin)); //准备文章的查询
-            var notices = NoticeService.LoadPageEntitiesFromL2Cache<DateTime, NoticeOutputDto>(1, 5, out int _, n => (n.Status == Status.Display || user.IsAdmin), n => n.ModifyDate, false).ToList(); //加载前5条公告
-            var cats = CategoryService.LoadEntitiesFromL2Cache<string, CategoryOutputDto>(c => c.Status == Status.Available, c => c.Name).ToList(); //加载分类目录
-            var start = DateTime.Today.AddDays(-7);
-            var hotSearches = SearchDetailsService.LoadEntitiesNoTracking(s => s.SearchTime > start, s => s.SearchTime, false).GroupBy(s => s.KeyWords).OrderByDescending(g => g.Count()).Take(10).Select(g => new KeywordsRankOutputDto()
+            var postsQuery = PostService.GetQuery<PostDto>(p => p.Status == Status.Published); //准备文章的查询
+            var notices = await NoticeService.GetPagesFromCacheAsync<DateTime, NoticeDto>(1, 5, n => n.Status == Status.Display, n => n.ModifyDate, false); //加载前5条公告
+            var cats = await CategoryService.GetQueryFromCacheAsync<string, CategoryDto>(c => c.Status == Status.Available, c => c.Name); //加载分类目录
+            var hotSearches = RedisHelper.Get<List<KeywordsRank>>("SearchRank:Week").Take(10).ToList(); //热词统计
+            var hot6Post = await postsQuery.OrderBy((new Random().Next() % 3) switch
             {
-                KeyWords = g.FirstOrDefault().KeyWords,
-                SearchCount = g.Count()
-            }).Cacheable().ToList(); //热词统计
-            Expression<Func<PostOutputDto, double>> order = p => p.TotalViewCount;
-            switch (new Random().Next() % 3)
-            {
-                case 1:
-                    order = p => p.VoteUpCount;
-                    break;
-                case 2:
-                    order = p => p.AverageViewCount;
-                    break;
-            }
-            var hot6Post = postList.OrderByDescending(order).Skip(0).Take(5).Cacheable().ToList(); //热门文章
-            var topPostWeek = PostService.SqlQuery<SimplePostModel>("SELECT [Id],[Title] from Post WHERE Id in (SELECT top 10 PostId FROM [dbo].[PostAccessRecord] where DATEDIFF(week,AccessTime,getdate())<=1 GROUP BY PostId ORDER BY sum(ClickCount) desc)").ToList(); //文章周排行
-            var topPostMonth = PostService.SqlQuery<SimplePostModel>("SELECT [Id],[Title] from Post WHERE Id in (SELECT top 10 PostId FROM [dbo].[PostAccessRecord] where DATEDIFF(month,AccessTime,getdate())<=1 GROUP BY PostId ORDER BY sum(ClickCount) desc)").ToList(); //文章月排行
-            var topPostYear = PostService.SqlQuery<SimplePostModel>("SELECT [Id],[Title] from Post WHERE Id in (SELECT top 10 PostId FROM [dbo].[PostAccessRecord] where DATEDIFF(year,AccessTime,getdate())<=1 GROUP BY PostId ORDER BY sum(ClickCount) desc)").ToList(); //文章年度排行
-            var tags = new List<string>(); //标签云
-            var tagdic = new Dictionary<string, int>();
+                1 => nameof(OrderBy.VoteUpCount),
+                2 => nameof(OrderBy.AverageViewCount),
+                _ => nameof(OrderBy.TotalViewCount)
+            } + " desc").Skip(0).Take(5).FromCacheAsync(); //热门文章
             var newdic = new Dictionary<string, int>(); //标签云最终结果
-            postList.Select(p => p.Label).Cacheable().ToList().ForEach(m =>
-            {
-                if (!string.IsNullOrEmpty(m))
-                {
-                    tags.AddRange(m.Split(',', '，'));
-                }
-            }); //统计标签
-            tags.GroupBy(s => s).ForEach(g =>
-            {
-                tagdic.Add(g.Key, g.Count());
-            }); //将标签分组
+            var tagdic = postsQuery.Where(p => !string.IsNullOrEmpty(p.Label)).Select(p => p.Label).Distinct().FromCache().ToList().SelectMany(s => s.Split(',', '，')).GroupBy(s => s).ToDictionary(g => g.Key, g => g.Count()); //统计标签
+
             if (tagdic.Any())
             {
-                int min = tagdic.Values.Min();
-                tagdic.ForEach(kv =>
+                var min = tagdic.Values.Min();
+                foreach (var (key, value) in tagdic)
                 {
-                    var fontsize = (int)Math.Floor(kv.Value * 1.0 / (min * 1.0) + 12.0);
-                    newdic.Add(kv.Key, fontsize >= 36 ? 36 : fontsize);
-                });
+                    var fontsize = (int)Math.Floor(value * 1.0 / (min * 1.0) + 12.0);
+                    newdic.Add(key, fontsize >= 36 ? 36 : fontsize);
+                }
             }
-            IList<PostOutputDto> posts;
-            switch (orderBy) //文章排序
+
+            return new HomePageViewModel()
             {
-                case OrderBy.CommentCount:
-                    posts = postList.Where(p => !p.IsFixedTop).OrderByDescending(p => p.Comment.Count).Skip(size * (page - 1)).Take(size).Cacheable().ToList();
-                    break;
-                case OrderBy.PostDate:
-                    posts = postList.Where(p => !p.IsFixedTop).OrderByDescending(p => p.PostDate).Skip(size * (page - 1)).Take(size).Cacheable().ToList();
-                    break;
-                case OrderBy.ViewCount:
-                    posts = postList.Where(p => !p.IsFixedTop).OrderByDescending(p => p.TotalViewCount).Skip(size * (page - 1)).Take(size).Cacheable().ToList();
-                    break;
-                case OrderBy.VoteCount:
-                    posts = postList.Where(p => !p.IsFixedTop).OrderByDescending(p => p.VoteUpCount).Skip(size * (page - 1)).Take(size).Cacheable().ToList();
-                    break;
-                case OrderBy.AverageViewCount:
-                    posts = postList.Where(p => !p.IsFixedTop).OrderByDescending(p => p.AverageViewCount).Skip(size * (page - 1)).Take(size).Cacheable().ToList();
-                    break;
-                default:
-                    posts = postList.Where(p => !p.IsFixedTop).OrderByDescending(p => p.ModifyDate).Skip(size * (page - 1)).Take(size).Cacheable().ToList();
-                    break;
-            }
-            if (page == 1)
-            {
-                posts = postList.Where(p => p.IsFixedTop).OrderByDescending(p => p.ModifyDate).AsEnumerable().Union(posts).ToList();
-            }
-            return new IndexPageViewModel()
-            {
-                Categories = cats,
+                Categories = cats.ToList(),
                 HotSearch = hotSearches,
-                Notices = notices,
-                Posts = posts,
+                Notices = notices.Data,
                 Tags = newdic,
-                Top6Post = hot6Post,
-                TopPostByMonth = topPostMonth,
-                TopPostByWeek = topPostWeek,
-                TopPostByYear = topPostYear,
-                PostsQueryable = postList
+                Top6Post = hot6Post.ToList(),
+                PostsQueryable = postsQuery
             };
         }
     }

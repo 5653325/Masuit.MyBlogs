@@ -1,9 +1,8 @@
+using Masuit.Tools.Core.Validator;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
-using Masuit.MyBlogs.Core.Models.Entity;
-using Masuit.MyBlogs.Core.Models.Validation;
 
 namespace Masuit.MyBlogs.Core.Models.Entity
 {
@@ -63,11 +62,6 @@ namespace Masuit.MyBlogs.Core.Models.Entity
         /// 用户头像
         /// </summary>
         public string Avatar { get; set; }
-
-        /// <summary>
-        /// AccessToken，接入第三方登陆时用
-        /// </summary>
-        public string AccessToken { get; set; }
 
         public virtual ICollection<LoginRecord> LoginRecord { get; set; }
     }

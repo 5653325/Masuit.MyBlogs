@@ -1,24 +1,27 @@
-﻿using Common;
-using Hangfire;
+﻿using DocumentFormat.OpenXml.Packaging;
+using HtmlAgilityPack;
 using Masuit.MyBlogs.Core.Common;
-using Masuit.MyBlogs.Core.Extensions;
 using Masuit.MyBlogs.Core.Extensions.UEditor;
 using Masuit.MyBlogs.Core.Models.DTO;
 using Masuit.MyBlogs.Core.Models.ViewModel;
-using Masuit.Tools;
 using Masuit.Tools.AspNetCore.Mime;
 using Masuit.Tools.AspNetCore.ResumeFileResults.Extensions;
+using Masuit.Tools.Core.Net;
 using Masuit.Tools.Html;
 using Masuit.Tools.Logging;
-using Masuit.Tools.Media;
+using Masuit.Tools.Systems;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Newtonsoft.Json;
+using OpenXmlPowerTools;
 using System;
 using System.IO;
+using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
-using System.Threading;
+using System.Threading.Tasks;
+using System.Xml.Linq;
 
 namespace Masuit.MyBlogs.Core.Controllers
 {
@@ -28,16 +31,9 @@ namespace Masuit.MyBlogs.Core.Controllers
     [ApiExplorerSettings(IgnoreApi = true)]
     public class UploadController : Controller
     {
-        private readonly IHostingEnvironment _hostingEnvironment;
+        public IWebHostEnvironment HostEnvironment { get; set; }
 
-        /// <summary>
-        /// 文件上传
-        /// </summary>
-        /// <param name="hostingEnvironment"></param>
-        public UploadController(IHostingEnvironment hostingEnvironment)
-        {
-            _hostingEnvironment = hostingEnvironment;
-        }
+        public ImagebedClient ImagebedClient { get; set; }
 
         /// <summary>
         /// 
@@ -66,85 +62,120 @@ namespace Masuit.MyBlogs.Core.Controllers
         /// </summary>
         /// <returns></returns>
         [HttpPost]
-        public ActionResult UploadWord()
+        public async Task<ActionResult> UploadWord()
         {
-            var files = Request.Form.Files;
-            if (files.Count > 0 && files[0] != null)
+            var form = await Request.ReadFormAsync();
+            var files = form.Files;
+            if (files.Count <= 0)
             {
-                var file = files[0];
-                string fileName = file.FileName;
-                if (fileName != null && !Regex.IsMatch(Path.GetExtension(fileName), "doc|docx"))
-                {
-                    return ResultData(null, false, "文件格式不支持，只能上传doc或者docx的文档!");
-                }
-                if (fileName != null)
-                {
-                    string upload = _hostingEnvironment.WebRootPath + "/upload";
-                    if (!Directory.Exists(upload))
-                    {
-                        Directory.CreateDirectory(upload);
-                    }
-                    string resourceName = string.Empty.CreateShortToken(9);
-                    string ext = Path.GetExtension(fileName);
-                    string docPath = Path.Combine(upload, resourceName + ext);
-                    using (FileStream fs = new FileStream(docPath, FileMode.OpenOrCreate, FileAccess.ReadWrite))
-                    {
-                        file.CopyTo(fs);
-                    }
-                    string htmlDir = docPath.Replace(".docx", "").Replace(".doc", "");
-                    DocumentConvert.Doc2Html(docPath, htmlDir);
-                    string htmlfile = Path.Combine(htmlDir, "index.html");
-                    string html = System.IO.File.ReadAllText(htmlfile).ReplaceHtmlImgSource("/upload/" + resourceName).ClearHtml().HtmlSantinizerStandard();
-                    ThreadPool.QueueUserWorkItem(state => System.IO.File.Delete(htmlfile));
-                    if (html.Length < 10)
-                    {
-                        Directory.Delete(htmlDir, true);
-                        System.IO.File.Delete(docPath);
-                        return ResultData(null, false, "读取文件内容失败，请检查文件的完整性，建议另存后重新上传！");
-                    }
-                    if (html.Length > 1000000)
-                    {
-                        Directory.Delete(htmlDir, true);
-                        System.IO.File.Delete(docPath);
-                        return ResultData(null, false, "文档内容超长，服务器拒绝接收，请优化文档内容后再尝试重新上传！");
-                    }
-                    return ResultData(new
-                    {
-                        Title = Path.GetFileNameWithoutExtension(fileName),
-                        Content = html,
-                        ResourceName = resourceName + ext
-                    });
-                }
+                return ResultData(null, false, "请先选择您需要上传的文件!");
             }
-            return ResultData(null, false, "请先选择您需要上传的文件!");
-        }
 
-        /// <summary>
-        /// 解码Base64图片
-        /// </summary>
-        /// <param name="data"></param>
-        /// <returns></returns>
-        public ActionResult DecodeDataUri(string data)
+            var file = files[0];
+            string fileName = file.FileName;
+            if (!Regex.IsMatch(Path.GetExtension(fileName), "doc|docx"))
+            {
+                return ResultData(null, false, "文件格式不支持，只能上传doc或者docx的文档!");
+            }
+
+            var html = await SaveAsHtml(file);
+            if (html.Length < 10)
+            {
+                return ResultData(null, false, "读取文件内容失败，请检查文件的完整性，建议另存后重新上传！");
+            }
+
+            if (html.Length > 1000000)
+            {
+                return ResultData(null, false, "文档内容超长，服务器拒绝接收，请优化文档内容后再尝试重新上传！");
+            }
+
+            return ResultData(new
+            {
+                Title = Path.GetFileNameWithoutExtension(fileName),
+                Content = html
+            });
+        }
+        private async Task<string> ConvertToHtml(IFormFile file)
         {
-            var dir = "/upload/images";
-            var filename = string.Empty.CreateShortToken(9) + ".jpg";
-            string path = Path.Combine(dir, filename);
+            var docfile = Path.Combine(Environment.GetEnvironmentVariable("temp") ?? "upload", file.FileName);
             try
             {
-                data.SaveDataUriAsImageFile().Save(_hostingEnvironment.WebRootPath + path, System.Drawing.Imaging.ImageFormat.Jpeg);
-                var (url, success) = CommonHelper.UploadImage(path);
-                BackgroundJob.Enqueue(() => System.IO.File.Delete(path));
-                if (success)
+                await using var ms = file.OpenReadStream();
+                await using var fs = System.IO.File.Create(docfile, 1024, FileOptions.DeleteOnClose);
+                await ms.CopyToAsync(fs);
+                using var doc = WordprocessingDocument.Open(fs, true);
+                var pageTitle = file.FileName;
+                var part = doc.CoreFilePropertiesPart;
+                if (part != null)
                 {
-                    return ResultData(url);
+                    pageTitle ??= (string)part.GetXDocument().Descendants(DC.title).FirstOrDefault();
                 }
-                return ResultData(null, false, "图片上传失败！");
+
+                var settings = new HtmlConverterSettings()
+                {
+                    PageTitle = pageTitle,
+                    FabricateCssClasses = false,
+                    RestrictToSupportedLanguages = false,
+                    RestrictToSupportedNumberingFormats = false,
+                    ImageHandler = imageInfo =>
+                    {
+                        var stream = new MemoryStream();
+                        imageInfo.Bitmap.Save(stream, imageInfo.Bitmap.RawFormat);
+                        var base64String = Convert.ToBase64String(stream.ToArray());
+                        return new XElement(Xhtml.img, new XAttribute(NoNamespace.src, $"data:{imageInfo.ContentType};base64," + base64String), imageInfo.ImgStyleAttribute, imageInfo.AltText != null ? new XAttribute(NoNamespace.alt, imageInfo.AltText) : null);
+                    }
+                };
+                var htmlElement = HtmlConverter.ConvertToHtml(doc, settings);
+                var html = new XDocument(new XDocumentType("html", null, null, null), htmlElement);
+                var htmlString = html.ToString(SaveOptions.DisableFormatting);
+                return htmlString;
             }
-            catch (Exception e)
+            finally
             {
-                LogManager.Error(e);
-                return ResultData(null, false, "转码失败！");
+                if (System.IO.File.Exists(docfile))
+                {
+                    System.IO.File.Delete(docfile);
+                }
             }
+        }
+
+        private async Task<string> SaveAsHtml(IFormFile file)
+        {
+            var html = await ConvertToHtml(file);
+            var doc = new HtmlDocument();
+            doc.LoadHtml(html);
+            var body = doc.DocumentNode.SelectSingleNode("//body");
+            var style = doc.DocumentNode.SelectSingleNode("//style");
+            var nodes = body.SelectNodes("//img");
+            if (nodes != null)
+            {
+                foreach (var img in nodes)
+                {
+                    var attr = img.Attributes["src"].Value;
+                    var strs = attr.Split(",");
+                    var base64 = strs[1];
+                    var bytes = Convert.FromBase64String(base64);
+                    var ext = strs[0].Split(";")[0].Split("/")[1];
+                    await using var image = new MemoryStream(bytes);
+                    var imgFile = $"{SnowFlake.NewId}.{ext}";
+                    var path = Path.Combine(HostEnvironment.WebRootPath, CommonHelper.SystemSettings.GetOrAdd("UploadPath", "upload").Trim('/', '\\'), "images", imgFile);
+                    var dir = Path.GetDirectoryName(path);
+                    Directory.CreateDirectory(dir);
+                    await using var fs = new FileStream(path, FileMode.OpenOrCreate, FileAccess.ReadWrite);
+                    await image.CopyToAsync(fs);
+                    img.Attributes["src"].Value = path.Substring(HostEnvironment.WebRootPath.Length).Replace("\\", "/");
+                }
+            }
+
+            return style.OuterHtml + body.InnerHtml.HtmlSantinizerStandard().HtmlSantinizerCustom(attributes: new[] { "dir", "lang" });
+        }
+
+        private static async Task SaveFile(IFormFile file, string path)
+        {
+            var dir = Path.GetDirectoryName(path);
+            Directory.CreateDirectory(dir);
+            await using var fs = new FileStream(path, FileMode.OpenOrCreate, FileAccess.ReadWrite);
+            await file.CopyToAsync(fs);
         }
 
         #endregion
@@ -159,11 +190,12 @@ namespace Masuit.MyBlogs.Core.Controllers
         public ActionResult Download(string path)
         {
             if (string.IsNullOrEmpty(path)) return Content("null");
-            var file = Path.Combine(_hostingEnvironment.WebRootPath + "/upload", path.Trim('.', '/', '\\'));
+            var file = Path.Combine(HostEnvironment.WebRootPath, CommonHelper.SystemSettings.GetOrAdd("UploadPath", "upload").Trim('/', '\\'), path.Trim('.', '/', '\\'));
             if (System.IO.File.Exists(file))
             {
                 return this.ResumePhysicalFile(file, Path.GetFileName(file));
             }
+
             return Content("null");
         }
 
@@ -172,39 +204,35 @@ namespace Masuit.MyBlogs.Core.Controllers
         /// </summary>
         /// <returns></returns>
         [Route("fileuploader")]
-        public ActionResult UeditorFileUploader()
+        public async Task<ActionResult> UeditorFileUploader()
         {
-            UserInfoOutputDto user = HttpContext.Session.GetByRedis<UserInfoOutputDto>(SessionKey.UserInfo) ?? new UserInfoOutputDto();
-            Handler action = new NotSupportedHandler(HttpContext);
-            switch (Request.Query["action"])//通用
+            UserInfoDto user = HttpContext.Session.Get<UserInfoDto>(SessionKey.UserInfo) ?? new UserInfoDto();
+            var action = Request.Query["action"].ToString() switch //通用
             {
-                case "config":
-                    action = new ConfigHandler(HttpContext);
-                    break;
-                case "uploadimage":
-                    action = new UploadHandler(HttpContext, new UploadConfig()
+                "config" => (Handler)new ConfigHandler(HttpContext),
+                "uploadimage" => new UploadHandler(HttpContext, new UploadConfig()
+                {
+                    AllowExtensions = UeditorConfig.GetStringList("imageAllowFiles"),
+                    PathFormat = "/" + CommonHelper.SystemSettings.GetOrAdd("UploadPath", "upload").Trim('/', '\\') + UeditorConfig.GetString("imagePathFormat"),
+                    SizeLimit = UeditorConfig.GetInt("imageMaxSize"),
+                    UploadFieldName = UeditorConfig.GetString("imageFieldName")
+                }),
+                "uploadscrawl" => new UploadHandler(HttpContext, new UploadConfig()
+                {
+                    AllowExtensions = new[]
                     {
-                        AllowExtensions = UeditorConfig.GetStringList("imageAllowFiles"),
-                        PathFormat = UeditorConfig.GetString("imagePathFormat"),
-                        SizeLimit = UeditorConfig.GetInt("imageMaxSize"),
-                        UploadFieldName = UeditorConfig.GetString("imageFieldName")
-                    });
-                    break;
-                case "uploadscrawl":
-                    action = new UploadHandler(HttpContext, new UploadConfig()
-                    {
-                        AllowExtensions = new[] { ".png" },
-                        PathFormat = UeditorConfig.GetString("scrawlPathFormat"),
-                        SizeLimit = UeditorConfig.GetInt("scrawlMaxSize"),
-                        UploadFieldName = UeditorConfig.GetString("scrawlFieldName"),
-                        Base64 = true,
-                        Base64Filename = "scrawl.png"
-                    });
-                    break;
-                case "catchimage":
-                    action = new CrawlerHandler(HttpContext);
-                    break;
-            }
+                        ".png"
+                    },
+                    PathFormat = "/" + CommonHelper.SystemSettings.GetOrAdd("UploadPath", "upload").Trim('/', '\\') + UeditorConfig.GetString("scrawlPathFormat"),
+                    SizeLimit = UeditorConfig.GetInt("scrawlMaxSize"),
+                    UploadFieldName = UeditorConfig.GetString("scrawlFieldName"),
+                    Base64 = true,
+                    Base64Filename = "scrawl.png"
+                }),
+                "catchimage" => new CrawlerHandler(HttpContext),
+                _ => new NotSupportedHandler(HttpContext)
+            };
+
             if (user.IsAdmin)
             {
                 switch (Request.Query["action"])//管理员用
@@ -213,7 +241,7 @@ namespace Masuit.MyBlogs.Core.Controllers
                     //    action = new UploadHandler(context, new UploadConfig()
                     //    {
                     //        AllowExtensions = UeditorConfig.GetStringList("videoAllowFiles"),
-                    //        PathFormat = UeditorConfig.GetString("videoPathFormat"),
+                    //        PathFormat =  "/" + CommonHelper.SystemSettings.GetOrAdd("UploadPath", "upload") + UeditorConfig.GetString("videoPathFormat"),
                     //        SizeLimit = UeditorConfig.GetInt("videoMaxSize"),
                     //        UploadFieldName = UeditorConfig.GetString("videoFieldName")
                     //    });
@@ -222,22 +250,71 @@ namespace Masuit.MyBlogs.Core.Controllers
                         action = new UploadHandler(HttpContext, new UploadConfig()
                         {
                             AllowExtensions = UeditorConfig.GetStringList("fileAllowFiles"),
-                            PathFormat = UeditorConfig.GetString("filePathFormat"),
+                            PathFormat = "/" + CommonHelper.SystemSettings.GetOrAdd("UploadPath", "upload").Trim('/', '\\') + UeditorConfig.GetString("filePathFormat"),
                             SizeLimit = UeditorConfig.GetInt("fileMaxSize"),
                             UploadFieldName = UeditorConfig.GetString("fileFieldName")
                         });
                         break;
                         //case "listimage":
-                        //    action = new ListFileManager(context, UeditorConfig.GetString("imageManagerListPath"), UeditorConfig.GetStringList("imageManagerAllowFiles"));
+                        //    action = new ListFileManager(context, CommonHelper.SystemSettings.GetOrAdd("UploadPath", "/upload") + UeditorConfig.GetString("imageManagerListPath"), UeditorConfig.GetStringList("imageManagerAllowFiles"));
                         //    break;
                         //case "listfile":
-                        //    action = new ListFileManager(context, UeditorConfig.GetString("fileManagerListPath"), UeditorConfig.GetStringList("fileManagerAllowFiles"));
+                        //    action = new ListFileManager(context, CommonHelper.SystemSettings.GetOrAdd("UploadPath", "/upload") + UeditorConfig.GetString("fileManagerListPath"), UeditorConfig.GetStringList("fileManagerAllowFiles"));
                         //    break;
                 }
             }
 
-            string result = action.Process();
+            string result = await action.Process();
             return Content(result, ContentType.Json);
+        }
+
+        /// <summary>
+        /// 上传文件
+        /// </summary>
+        /// <param name="file"></param>
+        /// <returns></returns>
+        [HttpPost("upload"), ApiExplorerSettings(IgnoreApi = false)]
+        public async Task<ActionResult> UploadFile(IFormFile file)
+        {
+            string path;
+            string filename = SnowFlake.GetInstance().GetUniqueId() + Path.GetExtension(file.FileName);
+            switch (file.ContentType)
+            {
+                case var _ when file.ContentType.StartsWith("image"):
+                    {
+                        var (url, success) = await ImagebedClient.UploadImage(file.OpenReadStream(), file.FileName);
+                        if (success)
+                        {
+                            return ResultData(url);
+                        }
+
+                        path = Path.Combine(HostEnvironment.WebRootPath, CommonHelper.SystemSettings.GetOrAdd("UploadPath", "upload").Trim('/', '\\'), "images", filename);
+                        var dir = Path.GetDirectoryName(path);
+                        Directory.CreateDirectory(dir);
+                        await using var fs = new FileStream(path, FileMode.OpenOrCreate, FileAccess.ReadWrite);
+                        await file.CopyToAsync(fs);
+                        break;
+                    }
+                case var _ when file.ContentType.StartsWith("audio") || file.ContentType.StartsWith("video"):
+                    path = Path.Combine(HostEnvironment.WebRootPath, CommonHelper.SystemSettings.GetOrAdd("UploadPath", "upload").Trim('/', '\\'), "media", filename);
+                    break;
+                case var _ when file.ContentType.StartsWith("text") || (ContentType.Doc + "," + ContentType.Xls + "," + ContentType.Ppt + "," + ContentType.Pdf).Contains(file.ContentType):
+                    path = Path.Combine(HostEnvironment.WebRootPath, CommonHelper.SystemSettings.GetOrAdd("UploadPath", "upload").Trim('/', '\\'), "docs", filename);
+                    break;
+                default:
+                    path = Path.Combine(HostEnvironment.WebRootPath, CommonHelper.SystemSettings.GetOrAdd("UploadPath", "upload").Trim('/', '\\'), "files", filename);
+                    break;
+            }
+            try
+            {
+                await SaveFile(file, path);
+                return ResultData(path.Substring(HostEnvironment.WebRootPath.Length).Replace("\\", "/"));
+            }
+            catch (Exception e)
+            {
+                LogManager.Error(e);
+                return ResultData(null, false, "文件上传失败！");
+            }
         }
     }
 }

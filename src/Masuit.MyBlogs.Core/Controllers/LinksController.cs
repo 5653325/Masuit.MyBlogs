@@ -1,17 +1,16 @@
-﻿using Common;
-using Masuit.MyBlogs.Core.Extensions;
+﻿using Masuit.MyBlogs.Core.Extensions;
 using Masuit.MyBlogs.Core.Models.DTO;
 using Masuit.MyBlogs.Core.Models.Entity;
 using Masuit.MyBlogs.Core.Models.Enum;
-using Masuit.MyBlogs.Core.Models.ViewModel;
 using Masuit.Tools;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.Net.Http.Headers;
 using System;
-using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Headers;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace Masuit.MyBlogs.Core.Controllers
@@ -21,21 +20,21 @@ namespace Masuit.MyBlogs.Core.Controllers
     /// </summary>
     public class LinksController : BaseController
     {
+        public IHttpClientFactory HttpClientFactory { get; set; }
+        public IWebHostEnvironment HostEnvironment { get; set; }
+        private HttpClient HttpClient => HttpClientFactory.CreateClient();
+
         /// <summary>
         /// 友情链接页
         /// </summary>
         /// <returns></returns>
-        [Route("links"), ResponseCache(Duration = 600, VaryByHeader = HeaderNames.Cookie)]
-        public ActionResult Index()
+        [Route("links"), ResponseCache(Duration = 600, VaryByHeader = "Cookie")]
+        public async Task<ActionResult> Index()
         {
-            UserInfoOutputDto user = HttpContext.Session.GetByRedis<UserInfoOutputDto>(SessionKey.UserInfo);
-            List<LinksOutputDto> list = LinksService.LoadEntities<object, LinksOutputDto>(l => l.Status == Status.Available, l => l.Recommend, false).ToList();
-            if (user != null && user.IsAdmin)
-            {
-                return View("Index_Admin", list);
-            }
-
-            return View(list);
+            var list = await LinksService.GetQueryFromCacheAsync<bool, LinksDto>(l => l.Status == Status.Available, l => l.Recommend, false);
+            ViewBag.Html = await System.IO.File.ReadAllTextAsync(Path.Combine(HostEnvironment.WebRootPath, "template", "links.html"));
+            ViewBag.Ads = AdsService.GetByWeightedPrice(AdvertiseType.InPage);
+            return CurrentUser.IsAdmin ? View("Index_Admin", list) : View(list);
         }
 
         /// <summary>
@@ -56,52 +55,45 @@ namespace Masuit.MyBlogs.Core.Controllers
                 return ResultData(null, false, "添加失败！检测到您的网站已经是本站的友情链接了！");
             }
 
-            Uri uri = new Uri(links.Url);
-            using (HttpClient client = new HttpClient()
+            HttpClient.DefaultRequestHeaders.UserAgent.Add(ProductInfoHeaderValue.Parse("Mozilla/5.0"));
+            HttpClient.DefaultRequestHeaders.Referrer = new Uri(Request.Scheme + "://" + Request.Host.ToString());
+            return await (await HttpClient.GetAsync(links.Url).ContinueWith(async t =>
             {
-                BaseAddress = uri,
-                Timeout = TimeSpan.FromSeconds(10)
-            })
-            {
-                client.DefaultRequestHeaders.UserAgent.Add(ProductInfoHeaderValue.Parse("Mozilla/5.0"));
-                client.DefaultRequestHeaders.Referrer = new Uri(Request.Scheme + "://" + Request.Host.ToString());
-                return await await client.GetAsync(uri.PathAndQuery).ContinueWith(async t =>
+                if (t.IsFaulted || t.IsCanceled)
                 {
-                    if (t.IsFaulted || t.IsCanceled)
-                    {
-                        return ResultData(null, false, "添加失败！检测到您的网站疑似挂了，或者连接到你网站的时候超时，请检查下！");
-                    }
+                    return ResultData(null, false, "添加失败！检测到您的网站疑似挂了，或者连接到你网站的时候超时，请检查下！");
+                }
 
-                    var res = await t;
-                    if (res.IsSuccessStatusCode)
-                    {
-                        var s = await res.Content.ReadAsStringAsync();
-                        if (s.Contains(CommonHelper.SystemSettings["Domain"]))
-                        {
-                            var entry = LinksService.GetFirstEntity(l => l.Url.Equals(links.Url));
-                            bool b;
-                            if (entry is null)
-                            {
-                                b = LinksService.AddEntitySaved(links) != null;
-                            }
-                            else
-                            {
-                                entry.Url = links.Url;
-                                entry.Except = links.Except;
-                                entry.Name = links.Name;
-                                entry.Recommend = links.Recommend;
-                                b = LinksService.UpdateEntitySaved(entry);
-                            }
-
-                            return ResultData(null, b, b ? "添加成功！这可能有一定的延迟，如果没有看到您的链接，请稍等几分钟后刷新页面即可，如有疑问，请联系站长。" : "添加失败！这可能是由于网站服务器内部发生了错误，如有疑问，请联系站长。");
-                        }
-
-                        return ResultData(null, false, $"添加失败！检测到您的网站上未将本站设置成友情链接，请先将本站主域名：{CommonHelper.SystemSettings["Domain"]}在您的网站设置为友情链接，并且能够展示后，再次尝试添加即可！");
-                    }
-
+                var res = await t;
+                if (!res.IsSuccessStatusCode)
+                {
                     return ResultData(null, false, "添加失败！检测到您的网站疑似挂了！返回状态码为：" + res.StatusCode);
-                });
-            }
+                }
+
+                var s = await res.Content.ReadAsStringAsync();
+                if (!s.Contains(Request.Host.Host))
+                {
+                    return ResultData(null, false, $"添加失败！检测到您的网站上未将本站设置成友情链接，请先将本站主域名：{Request.Host}在您的网站设置为友情链接，并且能够展示后，再次尝试添加即可！");
+                }
+
+                var entry = await LinksService.GetAsync(l => l.Url.Equals(links.Url));
+                bool b;
+                if (entry is null)
+                {
+                    b = LinksService.AddEntitySaved(links) != null;
+                }
+                else
+                {
+                    entry.Url = links.Url;
+                    entry.Except = links.Except;
+                    entry.Name = links.Name;
+                    entry.Recommend = links.Recommend;
+                    b = await LinksService.SaveChangesAsync() > 0;
+                }
+
+                return ResultData(null, b, b ? "添加成功！这可能有一定的延迟，如果没有看到您的链接，请稍等几分钟后刷新页面即可，如有疑问，请联系站长。" : "添加失败！这可能是由于网站服务器内部发生了错误，如有疑问，请联系站长。");
+
+            })).ConfigureAwait(false);
         }
 
         /// <summary>
@@ -109,14 +101,14 @@ namespace Masuit.MyBlogs.Core.Controllers
         /// </summary>
         /// <param name="links"></param>
         /// <returns></returns>
-        [Authority]
-        public ActionResult Add(Links links)
+        [MyAuthorize]
+        public async Task<ActionResult> Add(Links links)
         {
-            var entry = LinksService.GetById(links.Id);
+            var entry = await LinksService.GetByIdAsync(links.Id);
             bool b;
             if (entry is null)
             {
-                b = LinksService.AddEntitySaved(links) != null;
+                b = await LinksService.AddEntitySavedAsync(links) > 0;
             }
             else
             {
@@ -124,7 +116,7 @@ namespace Masuit.MyBlogs.Core.Controllers
                 entry.Except = links.Except;
                 entry.Name = links.Name;
                 entry.Recommend = links.Recommend;
-                b = LinksService.UpdateEntitySaved(entry);
+                b = await LinksService.SaveChangesAsync() > 0;
             }
 
             return b ? ResultData(null, message: "添加成功！") : ResultData(null, false, "添加失败！");
@@ -135,39 +127,27 @@ namespace Masuit.MyBlogs.Core.Controllers
         /// </summary>
         /// <param name="link"></param>
         /// <returns></returns>
-        [Authority]
+        [MyAuthorize]
         public async Task<ActionResult> Check(string link)
         {
-            Uri uri = new Uri(link);
-            using (var client = new HttpClient()
+            HttpClient.DefaultRequestHeaders.UserAgent.Add(ProductInfoHeaderValue.Parse("Mozilla/5.0"));
+            return await HttpClient.GetAsync(link, new CancellationTokenSource(TimeSpan.FromSeconds(10)).Token).ContinueWith(t =>
             {
-                BaseAddress = uri,
-                Timeout = TimeSpan.FromSeconds(10)
-            })
-            {
-                client.DefaultRequestHeaders.UserAgent.Add(ProductInfoHeaderValue.Parse("Mozilla/5.0"));
-                return await await client.GetAsync(uri.PathAndQuery).ContinueWith(async t =>
+                if (t.IsFaulted || t.IsCanceled)
                 {
-                    if (t.IsFaulted || t.IsCanceled)
-                    {
-                        return ResultData(null, false, link + " 似乎挂了！");
-                    }
+                    return ResultData(null, false, link + " 似乎挂了！");
+                }
 
-                    var res = await t;
-                    if (res.IsSuccessStatusCode)
-                    {
-                        var s = await res.Content.ReadAsStringAsync();
-                        if (s.Contains(CommonHelper.SystemSettings["Domain"]))
-                        {
-                            return ResultData(null, true, "友情链接正常！");
-                        }
-
-                        return ResultData(null, false, link + " 对方似乎没有本站的友情链接！");
-                    }
-
+                using var res = t.Result;
+                if (!res.IsSuccessStatusCode)
+                {
                     return ResultData(null, false, link + " 对方网站返回错误的状态码！http响应码为：" + res.StatusCode);
-                });
-            }
+                }
+
+                using var httpContent = res.Content;
+                var s = httpContent.ReadAsStringAsync().Result;
+                return s.Contains(Request.Host.Host) ? ResultData(null, true, "友情链接正常！") : ResultData(null, false, link + " 对方似乎没有本站的友情链接！");
+            });
         }
 
         /// <summary>
@@ -175,10 +155,10 @@ namespace Masuit.MyBlogs.Core.Controllers
         /// </summary>
         /// <param name="id"></param>
         /// <returns></returns>
-        [Authority]
-        public ActionResult Delete(int id)
+        [MyAuthorize]
+        public async Task<ActionResult> Delete(int id)
         {
-            bool b = LinksService.DeleteByIdSaved(id);
+            bool b = await LinksService.DeleteByIdSavedAsync(id) > 0;
             return ResultData(null, b, b ? "删除成功！" : "删除失败！");
         }
 
@@ -187,29 +167,25 @@ namespace Masuit.MyBlogs.Core.Controllers
         /// </summary>
         /// <param name="model"></param>
         /// <returns></returns>
-        [Authority]
-        public ActionResult Edit(Links model)
+        [MyAuthorize]
+        public async Task<ActionResult> Edit(Links model)
         {
-            Links links = LinksService.GetById(model.Id);
+            Links links = await LinksService.GetByIdAsync(model.Id);
             links.Name = model.Name;
             links.Url = model.Url;
-            bool b = LinksService.UpdateEntitySaved(links);
+            bool b = await LinksService.SaveChangesAsync() > 0;
             return ResultData(null, b, b ? "保存成功" : "保存失败");
         }
 
         /// <summary>
-        /// 分页数据
+        /// 所有的友情链接
         /// </summary>
-        /// <param name="page"></param>
-        /// <param name="size"></param>
         /// <returns></returns>
-        [Authority]
-        public ActionResult GetPageData(int page = 1, int size = 10)
+        [MyAuthorize]
+        public ActionResult Get()
         {
-            List<Links> list = LinksService.GetAll().OrderBy(p => p.Status).ThenByDescending(p => p.Recommend).ThenByDescending(p => p.Id).Skip((page - 1) * size).Take(size).ToList();
-            var total = LinksService.GetAll().Count();
-            var pageCount = Math.Ceiling(total * 1.0 / size).ToInt32();
-            return PageResult(list, pageCount, total);
+            var list = LinksService.GetAll().OrderBy(p => p.Status).ThenByDescending(p => p.Recommend).ThenByDescending(p => p.Id).ToList();
+            return ResultData(list);
         }
 
         /// <summary>
@@ -219,11 +195,12 @@ namespace Masuit.MyBlogs.Core.Controllers
         /// <param name="state"></param>
         /// <returns></returns>
         [HttpPost]
-        public ActionResult ToggleWhitelist(int id, bool state)
+        [MyAuthorize]
+        public async Task<ActionResult> ToggleWhitelist(int id, bool state)
         {
-            Links link = LinksService.GetById(id);
+            Links link = await LinksService.GetByIdAsync(id);
             link.Except = !state;
-            bool b = LinksService.UpdateEntitySaved(link);
+            bool b = await LinksService.SaveChangesAsync() > 0;
             return ResultData(null, b, b ? "切换成功！" : "切换失败！");
         }
 
@@ -234,11 +211,12 @@ namespace Masuit.MyBlogs.Core.Controllers
         /// <param name="state"></param>
         /// <returns></returns>
         [HttpPost]
-        public ActionResult ToggleRecommend(int id, bool state)
+        [MyAuthorize]
+        public async Task<ActionResult> ToggleRecommend(int id, bool state)
         {
-            Links link = LinksService.GetById(id);
+            Links link = await LinksService.GetByIdAsync(id);
             link.Recommend = !state;
-            bool b = LinksService.UpdateEntitySaved(link);
+            bool b = await LinksService.SaveChangesAsync() > 0;
             return ResultData(null, b, b ? "切换成功！" : "切换失败！");
         }
 
@@ -249,11 +227,12 @@ namespace Masuit.MyBlogs.Core.Controllers
         /// <param name="state"></param>
         /// <returns></returns>
         [HttpPost]
-        public ActionResult Toggle(int id, bool state)
+        [MyAuthorize]
+        public async Task<ActionResult> Toggle(int id, bool state)
         {
-            Links link = LinksService.GetById(id);
+            Links link = await LinksService.GetByIdAsync(id);
             link.Status = !state ? Status.Available : Status.Unavailable;
-            bool b = LinksService.UpdateEntitySaved(link);
+            bool b = await LinksService.SaveChangesAsync() > 0;
             return ResultData(null, b, b ? "切换成功！" : "切换失败！");
         }
     }

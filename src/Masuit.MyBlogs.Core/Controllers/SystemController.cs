@@ -1,23 +1,24 @@
-﻿using Common;
-using Masuit.MyBlogs.Core.Extensions.Hangfire;
-using Masuit.MyBlogs.Core.Hubs;
+﻿using Masuit.MyBlogs.Core.Common;
+using Masuit.MyBlogs.Core.Common.Mails;
+using Masuit.MyBlogs.Core.Extensions.Firewall;
 using Masuit.MyBlogs.Core.Infrastructure.Services.Interface;
 using Masuit.MyBlogs.Core.Models.Entity;
 using Masuit.MyBlogs.Core.Models.Enum;
 using Masuit.Tools;
-using Masuit.Tools.Hardware;
+using Masuit.Tools.DateTimeExt;
 using Masuit.Tools.Logging;
 using Masuit.Tools.Models;
 using Masuit.Tools.Systems;
-using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using System;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Net;
 using System.Text;
+using System.Threading.Tasks;
 
 namespace Masuit.MyBlogs.Core.Controllers
 {
@@ -30,105 +31,57 @@ namespace Masuit.MyBlogs.Core.Controllers
         /// 系统设置
         /// </summary>
         public ISystemSettingService SystemSettingService { get; set; }
-
-        /// <summary>
-        /// 系统设置
-        /// </summary>
-        /// <param name="userInfoService"></param>
-        /// <param name="systemSettingService"></param>
-        public SystemController(IUserInfoService userInfoService, ISystemSettingService systemSettingService)
-        {
-            UserInfoService = userInfoService;
-            SystemSettingService = systemSettingService;
-        }
-
-        /// <summary>
-        /// 获取硬件基本信息
-        /// </summary>
-        /// <returns></returns>
-        public ActionResult GetBaseInfo()
-        {
-            List<CpuInfo> cpuInfo = SystemInfo.GetCpuInfo();
-            RamInfo ramInfo = SystemInfo.GetRamInfo();
-            string osVersion = SystemInfo.GetOsVersion();
-            var total = new StringBuilder();
-            var free = new StringBuilder();
-            var usage = new StringBuilder();
-            SystemInfo.DiskTotalSpace().ForEach(kv =>
-            {
-                total.Append(kv.Key + kv.Value + " | ");
-            });
-            SystemInfo.DiskFree().ForEach(kv => free.Append(kv.Key + kv.Value + " | "));
-            SystemInfo.DiskUsage().ForEach(kv => usage.Append(kv.Key + kv.Value.ToString("P") + " | "));
-            IList<string> mac = SystemInfo.GetMacAddress();
-            IList<string> ips = SystemInfo.GetIPAddress();
-            var span = DateTime.Now - CommonHelper.StartupTime;
-            var boot = DateTime.Now - SystemInfo.BootTime();
-
-            return Json(new
-            {
-                runningTime = $"{span.Days}天{span.Hours}小时{span.Minutes}分钟",
-                bootTime = $"{boot.Days}天{boot.Hours}小时{boot.Minutes}分钟",
-                cpuInfo,
-                ramInfo,
-                osVersion,
-                diskInfo = new
-                {
-                    total = total.ToString(),
-                    free = free.ToString(),
-                    usage = usage.ToString()
-                },
-                netInfo = new
-                {
-                    mac,
-                    ips
-                }
-            });
-        }
+        public IFirewallRepoter FirewallRepoter { get; set; }
+        public IMailSender MailSender { get; set; }
 
         /// <summary>
         /// 获取历史性能计数器
         /// </summary>
         /// <returns></returns>
-        public ActionResult GetHistoryList()
+        public IActionResult GetCounterHistory()
         {
-            return Json(new
+            var list = PerfCounter.List.Count < 5000 ? PerfCounter.List : PerfCounter.List.GroupBy(c => c.Time / 60000).Select(g => new PerfCounter.PerformanceCounter()
             {
-                cpu = MyHub.PerformanceCounter.Select(c => new[]
+                Time = g.Key * 60000,
+                CpuLoad = g.Average(c => c.CpuLoad),
+                DiskRead = g.Average(c => c.DiskRead),
+                DiskWrite = g.Average(c => c.DiskWrite),
+                Download = g.Average(c => c.Download),
+                Upload = g.Average(c => c.Upload),
+                MemoryUsage = g.Average(c => c.MemoryUsage)
+            }).ToList();
+            return Ok(new
+            {
+                cpu = list.Select(c => new[]
                 {
                     c.Time,
-                    c.CpuLoad
+                    c.CpuLoad.ConvertTo<long>()
                 }),
-                mem = MyHub.PerformanceCounter.Select(c => new[]
+                mem = list.Select(c => new[]
                 {
                     c.Time,
-                    c.MemoryUsage
+                    c.MemoryUsage.ConvertTo<long>()
                 }),
-                temp = MyHub.PerformanceCounter.Select(c => new[]
+                read = list.Select(c => new[]
                 {
                     c.Time,
-                    c.Temperature
+                    c.DiskRead.ConvertTo<long>()
                 }),
-                read = MyHub.PerformanceCounter.Select(c => new[]
+                write = list.Select(c => new[]
                 {
                     c.Time,
-                    c.DiskRead
+                    c.DiskWrite.ConvertTo<long>()
                 }),
-                write = MyHub.PerformanceCounter.Select(c => new[]
+                down = list.Select(c => new[]
                 {
                     c.Time,
-                    c.DiskWrite
+                    c.Download.ConvertTo<long>()
                 }),
-                down = MyHub.PerformanceCounter.Select(c => new[]
+                up = list.Select(c => new[]
                 {
                     c.Time,
-                    c.Download
-                }),
-                up = MyHub.PerformanceCounter.Select(c => new[]
-                {
-                    c.Time,
-                    c.Upload
-                }),
+                    c.Upload.ConvertTo<long>()
+                })
             });
         }
 
@@ -147,55 +100,20 @@ namespace Masuit.MyBlogs.Core.Controllers
         }
 
         /// <summary>
-        /// 获取设置项
-        /// </summary>
-        /// <param name="name"></param>
-        /// <returns></returns>
-        [AllowAnonymous]
-        public ActionResult GetSetting(string name)
-        {
-            var entity = SystemSettingService.GetFirstEntity(s => s.Name.Equals(name));
-            return ResultData(entity);
-        }
-
-        /// <summary>
         /// 保存设置
         /// </summary>
         /// <param name="sets"></param>
         /// <returns></returns>
-        public ActionResult Save(string sets)
+        public async Task<ActionResult> Save(string sets)
         {
-            SystemSetting[] settings = JsonConvert.DeserializeObject<List<SystemSetting>>(sets).ToArray();
-            ConcurrentDictionary<string, HashSet<string>> dic = new ConcurrentDictionary<string, HashSet<string>>();
-            settings.FirstOrDefault(s => s.Name.Equals("DenyArea"))?.Value.Split(',', '，').ForEach(area =>
+            var settings = JsonConvert.DeserializeObject<List<SystemSetting>>(sets).ToArray();
+            var b = await SystemSettingService.AddOrUpdateSavedAsync(s => s.Name, settings) > 0;
+            var dic = settings.ToDictionary(s => s.Name, s => s.Value); //同步设置
+            foreach (var (key, value) in dic)
             {
-                if (CommonHelper.DenyAreaIP.TryGetValue(area, out var hs))
-                {
-                    dic[area] = hs;
-                }
-                else
-                {
-                    dic[area] = new HashSet<string>();
-                }
-            });
-            CommonHelper.DenyAreaIP = dic;
-            System.IO.File.WriteAllText(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "App_Data", "denyareaip.txt"), CommonHelper.DenyAreaIP.ToJsonString(), Encoding.UTF8);
-            foreach (var set in settings)
-            {
-                var entry = SystemSettingService.GetFirstEntity(s => s.Name.Equals(set.Name));
-                if (entry is null)
-                {
-                    SystemSettingService.AddEntity(set);
-                }
-                else
-                {
-                    entry.Value = set.Value;
-                    SystemSettingService.UpdateEntity(entry);
-                }
+                CommonHelper.SystemSettings.AddOrUpdate(key, value);
             }
 
-            var b = SystemSettingService.SaveChanges() > 0;
-            CommonHelper.SystemSettings = SystemSettingService.GetAll().ToDictionary(s => s.Name, s => s.Value); //同步设置
             return ResultData(null, b, b ? "设置保存成功！" : "设置保存失败！");
         }
 
@@ -215,6 +133,7 @@ namespace Masuit.MyBlogs.Core.Controllers
                     name = e.GetDisplay()
                 });
             }
+
             return ResultData(list);
         }
 
@@ -227,13 +146,13 @@ namespace Masuit.MyBlogs.Core.Controllers
         /// <param name="port"></param>
         /// <param name="to"></param>
         /// <returns></returns>
-        public ActionResult MailTest(string smtp, string user, string pwd, int port, string to)
+        public ActionResult MailTest(string smtp, string user, string pwd, int port, string to, bool ssl)
         {
             try
             {
                 new Email()
                 {
-                    EnableSsl = true,
+                    EnableSsl = ssl,
                     Body = "发送成功，网站邮件配置正确！",
                     SmtpServer = smtp,
                     Username = user,
@@ -257,10 +176,16 @@ namespace Masuit.MyBlogs.Core.Controllers
         /// <returns></returns>
         public ActionResult PathTest(string path)
         {
-            if (path.Equals("/") || path.Equals("\\") || string.IsNullOrWhiteSpace(path))
+            if (!(path.EndsWith("/") || path.EndsWith("\\")))
+            {
+                return ResultData(null, false, "路径不存在");
+            }
+
+            if (path.Equals("/") || path.Equals("\\"))
             {
                 return ResultData(null, true, "根路径正确");
             }
+
             try
             {
                 bool b = Directory.Exists(path);
@@ -274,14 +199,23 @@ namespace Masuit.MyBlogs.Core.Controllers
         }
 
         /// <summary>
-        /// 清空性能计数器缓存
+        /// 发件箱记录
         /// </summary>
         /// <returns></returns>
-        public ActionResult ClearPerfCounter()
+        public ActionResult<List<JObject>> SendBox()
         {
-            MyHub.PerformanceCounter.Clear();
-            return Ok();
+            return RedisHelper.SUnion(RedisHelper.Keys("Email:*")).Select(JObject.Parse).OrderByDescending(o => o["time"]).ToList();
         }
+
+        public ActionResult BounceEmail(string email)
+        {
+            var msg = MailSender.AddRecipient(email);
+            return Ok(new
+            {
+                msg
+            });
+        }
+
         #region 网站防火墙
 
         /// <summary>
@@ -291,15 +225,6 @@ namespace Masuit.MyBlogs.Core.Controllers
         public ActionResult IpBlackList()
         {
             return ResultData(CommonHelper.DenyIP);
-        }
-
-        /// <summary>
-        /// 获取地区IP黑名单
-        /// </summary>
-        /// <returns></returns>
-        public ActionResult AreaIPBlackList()
-        {
-            return ResultData(CommonHelper.DenyAreaIP);
         }
 
         /// <summary>
@@ -331,6 +256,7 @@ namespace Masuit.MyBlogs.Core.Controllers
                 {
                 }
             }
+
             return ResultData(null);
         }
 
@@ -348,10 +274,10 @@ namespace Masuit.MyBlogs.Core.Controllers
         /// </summary>
         /// <param name="content"></param>
         /// <returns></returns>
-        public ActionResult SetIpBlackList(string content)
+        public async Task<ActionResult> SetIpBlackList(string content)
         {
-            CommonHelper.DenyIP = content;
-            System.IO.File.WriteAllText(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "App_Data", "denyip.txt"), CommonHelper.DenyIP, Encoding.UTF8);
+            CommonHelper.DenyIP = content + "";
+            await System.IO.File.WriteAllTextAsync(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "App_Data", "denyip.txt"), CommonHelper.DenyIP, Encoding.UTF8);
             return ResultData(null);
         }
 
@@ -360,10 +286,10 @@ namespace Masuit.MyBlogs.Core.Controllers
         /// </summary>
         /// <param name="content"></param>
         /// <returns></returns>
-        public ActionResult SetIpWhiteList(string content)
+        public async Task<ActionResult> SetIpWhiteList(string content)
         {
-            System.IO.File.WriteAllText(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "App_Data", "whitelist.txt"), content, Encoding.UTF8);
-            CommonHelper.IPWhiteList = content.Split(',', '，');
+            await System.IO.File.WriteAllTextAsync(Path.Combine(AppDomain.CurrentDomain.BaseDirectory!, "App_Data", "whitelist.txt"), content, Encoding.UTF8);
+            CommonHelper.IPWhiteList.Add(content);
             return ResultData(null);
         }
 
@@ -377,7 +303,21 @@ namespace Masuit.MyBlogs.Core.Controllers
             return ResultData(new
             {
                 interceptCount = RedisHelper.Get("interceptCount"),
-                list
+                list,
+                ranking = list.GroupBy(i => i.IP).Where(g => g.Count() > 1).Select(g =>
+                {
+                    var start = g.Min(t => t.Time);
+                    var end = g.Max(t => t.Time);
+                    return new
+                    {
+                        g.Key,
+                        g.First().Address,
+                        Start = start,
+                        End = end,
+                        Continue = start.GetDiffTime(end),
+                        Count = g.Count()
+                    };
+                }).OrderByDescending(a => a.Count).Take(30)
             });
         }
 
@@ -396,41 +336,41 @@ namespace Masuit.MyBlogs.Core.Controllers
         /// </summary>
         /// <param name="ip"></param>
         /// <returns></returns>
-        public ActionResult AddToWhiteList(string ip)
+        public async Task<ActionResult> AddToWhiteList(string ip)
         {
-            if (ip.MatchInetAddress())
+            if (!ip.MatchInetAddress())
             {
-                string ips = System.IO.File.ReadAllText(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "App_Data", "whitelist.txt"));
-                List<string> list = ips.Split(',').Where(s => !string.IsNullOrEmpty(s)).ToList();
-                list.Add(ip);
-                System.IO.File.WriteAllText(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "App_Data", "whitelist.txt"), string.Join(",", list.Distinct()), Encoding.UTF8);
-                foreach (var kv in CommonHelper.DenyAreaIP)
-                {
-                    foreach (string item in list)
-                    {
-                        CommonHelper.DenyAreaIP[kv.Key].Remove(item);
-                    }
-                }
-                System.IO.File.WriteAllText(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "App_Data", "denyareaip.txt"), CommonHelper.DenyAreaIP.ToJsonString(), Encoding.UTF8);
-                return ResultData(null);
+                return ResultData(null, false);
             }
-            return ResultData(null, false);
+
+            var basedir = AppDomain.CurrentDomain.BaseDirectory;
+            string ips = await System.IO.File.ReadAllTextAsync(Path.Combine(basedir, "App_Data", "whitelist.txt"));
+            List<string> list = ips.Split(',').Where(s => !string.IsNullOrEmpty(s)).ToList();
+            list.Add(ip);
+            await System.IO.File.WriteAllTextAsync(Path.Combine(basedir, "App_Data", "whitelist.txt"), string.Join(",", list.Distinct()), Encoding.UTF8);
+            CommonHelper.IPWhiteList = list;
+            return ResultData(null);
         }
 
         /// <summary>
-        /// 将IP添加到白名单
+        /// 将IP添加到黑名单
         /// </summary>
         /// <param name="ip"></param>
         /// <returns></returns>
-        public ActionResult AddToBlackList(string ip)
+        public async Task<ActionResult> AddToBlackList(string ip)
         {
-            if (ip.MatchInetAddress())
+            if (!ip.MatchInetAddress())
             {
-                CommonHelper.DenyIP += "," + ip;
-                System.IO.File.WriteAllText(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "App_Data", "denyip.txt"), CommonHelper.DenyIP, Encoding.UTF8);
-                return ResultData(null);
+                return ResultData(null, false);
             }
-            return ResultData(null, false);
+
+            CommonHelper.DenyIP += "," + ip;
+            var basedir = AppDomain.CurrentDomain.BaseDirectory;
+            await System.IO.File.WriteAllTextAsync(Path.Combine(basedir, "App_Data", "denyip.txt"), CommonHelper.DenyIP, Encoding.UTF8);
+            CommonHelper.IPWhiteList.Remove(ip);
+            await System.IO.File.WriteAllTextAsync(Path.Combine(basedir, "App_Data", "whitelist.txt"), string.Join(",", CommonHelper.IPWhiteList.Distinct()), Encoding.UTF8);
+            await FirewallRepoter.ReportAsync(IPAddress.Parse(ip));
+            return ResultData(null);
         }
 
         #endregion

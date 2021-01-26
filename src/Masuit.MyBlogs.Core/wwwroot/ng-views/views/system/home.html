@@ -36,6 +36,26 @@
             </div>
         </div>
         <div class="input-group">
+            <span class="input-group-addon">上传图片水印：</span>
+            <div class="fg-line">
+                <input type="text" class="form-control" ng-model="Settings.Watermark" placeholder="留空则上传图片时不添加水印"/>
+            </div>
+        </div>
+        <div class="input-group">
+            <span class="input-group-addon el-switch" style="text-align: left">
+                <span>闭站保护：</span>
+                <input type="checkbox" name="switch" ng-checked="Settings.CloseSite=='true'">
+                <span class="el-switch-style" ng-click="CloseSite()"></span>
+            </span>
+        </div>
+        <div class="input-group">
+            <span class="input-group-addon el-switch" style="text-align: left">
+                <span>数据写保护：</span>
+                <input type="checkbox" name="switch" ng-checked="Settings.DataReadonly=='true'">
+                <span class="el-switch-style" ng-click="DataReadonly()"></span>
+            </span>
+        </div>
+        <div class="input-group">
             <span class="input-group-addon">资源管理器根目录：</span>
             <div class="fg-line">
                 <input type="text" class="form-control" ng-model="Settings.PathRoot" placeholder="请输入合法的路径，如果是网站根目录则输入反斜线“/”" />
@@ -44,6 +64,23 @@
                 <button type="button" class="btn btn-info" ng-click="pathtest()">检查路径</button>
             </span>
         </div>
+        <div class="input-group">
+            <span class="input-group-addon">文件上传目录：</span>
+            <div class="fg-line">
+                <input type="text" class="form-control" ng-model="Settings.UploadPath" placeholder="/upload" />
+            </div>
+        </div>
+    </div>
+    <div class="row">
+        <h3>自定义脚本和样式</h3>
+                <h4>css样式代码：</h4>
+            <div class="fg-line">
+                <textarea class="form-control" rows="10" style="width: 100%" ng-model="Settings.Styles" placeholder="将在网站head标签中追加css样式标签代码"></textarea>
+            </div>
+                <h4>js脚本代码：</h4>
+            <div class="fg-line">
+                <textarea class="form-control" rows="10" style="width: 100%" ng-model="Settings.Scripts" placeholder="将在网站页脚后追加js脚本标签代码"></textarea>
+            </div>
     </div>
     <div class="row">
         <h2>网站SEO相关</h2>
@@ -93,6 +130,13 @@
             </div>
         </div>
         <div class="input-group">
+            <span class="input-group-addon el-switch" style="text-align: left">
+                <span>启用SSL：</span>
+                <input type="checkbox" name="switch" ng-checked="Settings.EnableSsl=='true'">
+                <span class="el-switch-style" ng-click="EmailEnableSsl()"></span>
+            </span>
+        </div>
+        <div class="input-group">
             <span class="input-group-addon">接收网站通知邮箱：</span>
             <div class="fg-line">
                 <input type="text" class="form-control" ng-model="Settings.ReceiveEmail" />
@@ -100,16 +144,6 @@
             <span class="input-group-btn">
                 <button type="button" class="btn btn-info" ng-click="mailtest()">测试邮箱配置</button>
             </span>
-        </div>
-        <div class="input-group">
-            <span class="input-group-addon el-switch">
-                <span>禁用邮箱订阅广播：</span>
-                <input type="checkbox" name="switch" ng-checked="Settings.DisabledEmailBroadcast=='true'">
-                <span class="el-switch-style" ng-click="DisabledEmailBroadcast()"></span>
-            </span>
-            <div class="fg-line">
-                <input type="text" class="form-control" ng-model="Settings.DisabledEmailBroadcastTip" placeholder="邮箱订阅提示语" ng-readonly="Settings.DisabledEmailBroadcast=='false'" />
-            </div>
         </div>
     </div>
     <div class="row">
@@ -129,38 +163,26 @@
         </div>
         <div class="col-md-5">
             <h3>网站页脚版权：</h3>
-            <div style="height: 200px;" class="ueditor" ng-model="Settings.Copyright" type="text/plain"></div>
+            <div style="height: 120px;" class="ueditor" ng-model="Settings.Copyright" type="text/plain"></div>
         </div>
     </div>
-    <div class="row">
-        <h2>捐赠二维码</h2>
-        <div class="col-md-3 col-xs-6">
-            <h3>支付宝：</h3>
-            <img class="img img-responsive img-thumbnail img-rounded" ng-src="{{Settings.Donate}}" style="max-height: 300px;" ng-click="setImage('Donate')" />
-            <span class="input-group-btn">
-                <button type="button" class="btn btn-danger waves-effect" ng-click="setImage('Donate')">修改</button>
-            </span>
+</div>
+<div style="position: absolute;left: -20000px">
+    <form id="setImageForm" onsubmit="return false" enctype="multipart/form-data">
+        <div class="file-box">
+            <div class="input-group">
+                <span class="input-group-addon">上传图片：</span>
+                <div class="fg-line">
+                    <input type="text" name="file0" disabled class="form-control" placeholder="请选择一张图片" />
+                </div>
+                <span class="input-group-btn hidden">
+                    <a href="javascript:void(0);" class="btn btn-info ">浏览</a>
+                </span>
+                <input type="file" class="uploadFile" name="file" onchange="getFile(this, 'file0')" />
+            </div>
+            <div class="m-l-15 m-b-10">
+                <button type="button" class="btn btn-primary" ng-click="uploadImage()"> 上传 </button>
+            </div>
         </div>
-        <div class="col-md-3 col-xs-6">
-            <h3>微信：</h3>
-            <img class="img img-responsive img-thumbnail img-rounded" ng-src="{{Settings.DonateWechat}}" style="max-height: 300px;" ng-click="setImage('DonateWechat')" />
-            <span class="input-group-btn">
-                <button type="button" class="btn btn-danger waves-effect" ng-click="setImage('DonateWechat')">修改</button>
-            </span>
-        </div>
-        <div class="col-md-3 col-xs-6">
-            <h3>QQ：</h3>
-            <img class="img img-responsive img-thumbnail img-rounded" ng-src="{{Settings.DonateQQ}}" style="max-height: 300px;" ng-click="setImage('DonateQQ')" />
-            <span class="input-group-btn">
-                <button type="button" class="btn btn-danger waves-effect" ng-click="setImage('DonateQQ')">修改</button>
-            </span>
-        </div>
-        <div class="col-md-3 col-xs-6">
-            <h3>京东金融收钱码：</h3>
-            <img class="img img-responsive img-thumbnail img-rounded" ng-src="{{Settings.DonateJingdong}}" style="max-height: 300px;" ng-click="setImage('DonateJingdong')" />
-            <span class="input-group-btn">
-                <button type="button" class="btn btn-danger waves-effect" ng-click="setImage('DonateJingdong')">修改</button>
-            </span>
-        </div>
-    </div>
+    </form>
 </div>

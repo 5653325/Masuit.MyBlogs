@@ -17,8 +17,6 @@
     }
 </style>
 <form class="form-group" id="article-form" method="post" onsubmit="return false">
-    <input type="hidden" ng-model="post.IsWordDocument" />
-    <input type="hidden" ng-model="post.ResourceName" />
     <input type="hidden" ng-model="post.Author">
     <input type="hidden" ng-model="post.Email">
     <div class="input-group">
@@ -37,7 +35,7 @@
         <div style="height: 200px;" class="ueditor" ng-model="post.ProtectContent" type="text/plain"></div>
     </div>
     <div class="row">
-        <div class="col-md-4 col-sm-5">
+        <div class="col-md-3 col-sm-6">
             <div class="input-group">
                 <span class="input-group-addon">分类：</span>
                 <div class="ui fluid search selection dropdown category">
@@ -50,7 +48,7 @@
                 </div>
             </div>
         </div>
-        <div class="col-md-8 col-sm-6">
+        <div class="col-md-4 col-sm-6">
             <div class="input-group">
                 <span class="input-group-addon"><label for="Label">标签：</label></span>
                 <div class="ui fluid multiple search selection dropdown tags">
@@ -63,9 +61,20 @@
                 </div>
             </div>
         </div>
+        <div class="col-md-5 col-sm-6">
+            <div class="input-group">
+                <span class="input-group-addon"><label for="keyword">文章关键词：</label></span>
+                <div class="ui fluid multiple search selection dropdown keyword">
+                    <input name="keyword" type="hidden" id="keyword">
+                    <i class="dropdown icon"></i>
+                    <div class="default text">文章关键词</div>
+                    <div class="menu"></div>
+                </div>
+            </div>
+        </div>
     </div>
     <div class="row">
-        <div class="col-md-5 col-sm-3">
+        <div class="col-md-3 col-sm-6">
             <div class="input-group">
                 <span class="input-group-addon"><label for="seminar">专题：</label></span>
                 <div class="ui fluid multiple search selection dropdown seminar">
@@ -78,45 +87,64 @@
                 </div>
             </div>
         </div>
-        <div class="col-md-5 col-sm-3">
+        <div class="col-md-5 text-right">
             <div class="input-group">
-                <span class="input-group-addon"><label for="keyword">文章关键词：</label></span>
-                <div class="ui fluid multiple search selection dropdown keyword">
-                    <input name="keyword" type="hidden" id="keyword">
-                    <i class="dropdown icon"></i>
-                    <div class="default text">文章关键词</div>
-                    <div class="menu"></div>
+                <span class="input-group-addon">
+                    <label class="checkbox checkbox-inline m-r-20">
+                        <input type="checkbox" id="DisableCopy" ng-model="post.DisableCopy">
+                        <i class="input-helper"></i>
+                        禁止转载
+                    </label>
+                    <label class="checkbox checkbox-inline m-r-20">
+                        <input type="checkbox" id="DisableComment" ng-model="post.DisableComment">
+                        <i class="input-helper"></i>
+                        禁止评论
+                    </label>
+                    <label class="checkbox checkbox-inline m-r-20">
+                        <input type="checkbox" ng-model="post.schedule" ng-click="Scheduled()">
+                        <i class="input-helper"></i>
+                        定时发表
+                    </label>
+                </span>
+                <span class="input-group-addon" ng-if="post.schedule"><label for="Label">选择时间：</label></span>
+                <input type="text" class="workinput wicon" id="timespan" ng-model="post.timespan" readonly="readonly" ng-if="post.schedule" />
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="input-group">
+                <span class="input-group-addon" id="sizing-addon2">按地区投放：</span><select ng-model="post.LimitMode" ng-init="post.LimitMode = 0" class="form-control">
+                    <option ng-value="0" selected="selected">不限</option>
+                    <option ng-value="1">指定地区可见</option>
+                    <option ng-value="2">指定地区不可见</option>
+                    <option ng-value="3">指定地区可见但排除在内的这些地区</option>
+                    <option ng-value="4">指定地区不可见但排除在内的这些地区</option>
+                </select>
+                <span class="input-group-btn">
+                    <button type="button" class="btn btn-info" ng-click="submit(post)">发布</button>
+                </span>
+            </div>
+        </div>
+        <div ng-class="{true:'col-md-6',false:'col-md-12'}[post.LimitMode>2]" ng-if="post.LimitMode>0">
+            <div class="input-group">
+                <span class="input-group-addon">限制地区：</span>
+                <div class="fg-line">
+                    <input type="text" class="form-control" placeholder="江苏,苏州,移动,AS2333,DMIT，支持地区、运营商、ASN、机房名称" ng-model="post.Regions">
                 </div>
             </div>
         </div>
-        <div class="col-md-2">
-            <div class="input-group" ng-if="post.schedule">
-                <span class="input-group-addon"><label for="Label">选择时间：</label></span>
-                <input type="text" class="workinput wicon" id="timespan" ng-model="post.timespan" readonly="readonly" />
+        <div class="col-md-6" ng-if="post.LimitMode==3||post.LimitMode==4">
+            <div class="input-group">
+                <span class="input-group-addon">排除地区：</span>
+                <div class="fg-line">
+                    <input type="text" class="form-control" placeholder="江苏,苏州,移动,AS2333,DMIT，支持地区、运营商、ASN、机房名称" ng-model="post.ExceptRegions">
+                </div>
             </div>
-        </div>
-        <div class="col-md-2">
-            <div class="pull-right">
-                <button type="button" class="btn btn-info" ng-click="submit(post)">发布</button>
-            </div>
-            <span class="checkboxWrapper theme4 smallCheckboxSize pull-right" ng-click="Scheduled()">
-                <input type="checkbox" id="sample9" ng-model="post.schedule">
-                <label for="sample9">
-                    <i>
-                        <svg version="1.1" id="Layer_1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" x="0px" y="0px" width="50px" height="50px" viewBox="0 0 50 50" enable-background="new 0 0 50 50" xml:space="preserve">
-                        <circle fill="none" stroke="#B7B7B7" stroke-width="3" stroke-miterlimit="10" cx="25.11" cy="24.883" r="23.519" />
-                            <path fill="none" stroke-width="3" stroke-miterlimit="10" d="M48.659,25c0,12.998-10.537,23.534-23.534,23.534 S1.591,37.998,1.591,25S12.127,1.466,25.125,1.466c9.291,0,17.325,5.384,21.151,13.203L19,36l-9-14" />
-                        </svg>
-                    </i>
-                    定时发表
-                </label>
-            </span>
         </div>
     </div>
 </form>
-<div style="position: absolute; left: -20000px; bottom: -2000px;">
-    <div id="upfile">
-        <form id="fileform" onsubmit="return false" enctype="multipart/form-data">
+<div style="position: absolute; left: -20000px; ">
+    <div id="docfile">
+        <form id="docform" onsubmit="return false" enctype="multipart/form-data">
             <h4 class="h4">注意：重复上传将会覆盖之前上传的内容！</h4>
             <div class="file-box">
                 <div class="input-group">

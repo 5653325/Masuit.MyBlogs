@@ -1,14 +1,12 @@
 ﻿myApp.controller("postlist", ["$scope", "$http", "NgTableParams", "$timeout", function ($scope, $http, NgTableParams, $timeout) {
-	window.hub.stop();
-	$scope.loading();
-	var self = this;
+    var self = this;
 	self.stats = [];
 	self.data = {};
 	$scope.kw = "";
 	$scope.orderby = 1;
+	$scope.CategoryId = "";
 	$scope.paginationConf = {
 		currentPage:  1,
-		//totalItems: $scope.total,
 		itemsPerPage: 10,
 		pagesLength: 25,
 		perPageOptions: [1, 5, 10, 15, 20, 30, 40, 50, 100, 200],
@@ -17,6 +15,7 @@
 			self.GetPageData($scope.paginationConf.currentPage, $scope.paginationConf.itemsPerPage);
 		}
 	};
+
 	$('.orderby').dropdown('set value', $scope.orderby);
 	$('.orderby').dropdown({
 		allowAdditions: false,
@@ -25,36 +24,46 @@
 			self.GetPageData($scope.paginationConf.currentPage, $scope.paginationConf.itemsPerPage);
 		}
 	});
-	$('.field').dropdown({
-		allowAdditions: false,
-		onChange: function (value) {
-			var state = ["Author", "Email", "Status", "VoteUpCount", "VoteDownCount"];
-			state.map(function (item, index, array) {
-				$scope[item] = false;
+
+	$http.post("/category/getcategories", null).then(function (res) {
+		var data = res.data;
+		if (data.Success) {
+			$scope.cat = data.Data;
+			$('.ui.dropdown.category').dropdown({
+				onChange: function (value) {
+					$scope.CategoryId = value;
+					self.GetPageData($scope.paginationConf.currentPage, $scope.paginationConf.itemsPerPage);
+				},
+				message: {
+					maxSelections: '最多选择 {maxCount} 项',
+					noResults: '无搜索结果！'
+				}
 			});
-			value.split(",").map(function (item, index, array) {
-				$scope[item] = true;
+			
+            var params = JSON.parse(localStorage.getItem("postlist-params"));
+	        if (params) {
+		        $scope.kw = params["kw"];
+		        $scope.paginationConf.currentPage= params["page"];
+				$timeout(() => {
+                    $('.category').dropdown('set selected', params["cid"]);
+	                $('.orderby').dropdown('set selected', params["orderby"]);
+                },10);
+            }
+		} else {
+			window.notie.alert({
+				type: 3,
+				text: '获取文章分类失败！',
+				time: 4
 			});
-			self.tableParams.reload();
 		}
 	});
-	$scope.request("/post/viewtoken",null, function(data) {
-		$scope.ViewToken=data.Data;
-	});
+
 	this.GetPageData = function (page, size) {
-		$scope.loading();
-		$http.post("/post/getpagedata", {
-			page,
-			size,
-			kw: $scope.kw,
-			orderby:$scope.orderby
-		}).then(function(res) {
-			//$scope.paginationConf.currentPage = page;
+		var params={ page, size, kw: $scope.kw, orderby:$scope.orderby, cid:$scope.CategoryId };
+		$http.post("/post/getpagedata", params).then(function(res) {
 			$scope.paginationConf.totalItems = res.data.TotalCount;
 			$("div[ng-table-pagination]").remove();
-			self.tableParams = new NgTableParams({
-				count: 50000
-			}, {
+			self.tableParams = new NgTableParams({ count: 50000 }, {
 				filterDelay: 0,
 				dataset: res.data.Data
 			});
@@ -66,9 +75,11 @@
 				});
 			});
 			self.stats = Enumerable.From(self.stats).Distinct().ToArray();
-			$scope.loadingDone();
+			
+			localStorage.setItem("postlist-params",JSON.stringify(params));
 		});
 	}
+
 	self.del = function(row) {
 		swal({
 			title: "确认删除这篇文章吗？",
@@ -175,141 +186,47 @@
 			_timeout = null;
 		}, 500);
 	}
-	$scope.loadingDone();
-
-	self.analyse= function(row) {
-		$http.post("/post/analyse", {
-				id:row.Id
-			}).then(function(res) {
-				var data = res.data.Data;
-				if(!res.data.Success) {
-					window.notie.alert({
-						type:3,
-						text:res.data.Message,
-						time:4
-					});
-					return;
-				}
-				$scope.postAnalyse=data;
-				layer.open({
-					type:1,
-					zIndex:20,
-					title:'文章《'+row.Title+'》访客数据可视化',
-					offset:window.screen.height * 0.1 + "px",
-					area:document.body.clientWidth * 0.7 + "px",
-					content:$("#modal"),
-					success:function(layero, index) {
-						$('#chart').highcharts({chart: {
-								zoomType: 'x'
-							},
-							credits:{
-								enabled:false
-							},
-							boost:{
-								useGPUTranslations:true
-							},
-							tooltip:{
-								dateTimeLabelFormats:{
-									millisecond:'%H:%M:%S.%L',
-									second:'%H:%M:%S',
-									minute:'%H:%M',
-									hour:'%H:%M',
-									day:'%Y-%m-%d',
-									week:'%m-%d',
-									month:'%Y-%m',
-									year:'%Y'
-								},
-								formatter:function() {
-									return '时间点：<b>' + Highcharts.dateFormat("%Y-%m-%d", this.points[0].x) + '</b><br/>' +
-											'<span style="color:' + Highcharts.getOptions().colors[0] + '">访问量：<b>' +
-											this.points[0].y+'次</b></span><br/>';
-								},
-								crosshairs:true,
-								shared:true
-							},
-							scrollbar:{
-								enabled:false
-							},
-							title:{
-								text:''
-							},
-							legend: {
-								enabled: false // 关闭图例
-							},
-							xAxis:{
-								type:'datetime',
-								dateTimeLabelFormats:{
-									millisecond:'%H:%M:%S.%L',
-									second:'%H:%M:%S',
-									minute:'%H:%M',
-									hour:'%H:%M',
-									day:'%m-%d',
-									week:'%Y-%m-%d',
-									month:'%Y-%m',
-									year:'%Y'
-								}
-							},
-							yAxis:[
-								{
-									title:{
-										text:'访问量'
-									},
-									min:0,
-									opposite:false
-								}
-							],
-							plotOptions:{
-								series:{
-									showInNavigator:true,
-									marker:{
-										enabled:false
-									}
-								}
-							},
-							series:[{
-								name:'访问量',
-								data:data.list,
-								type:'areaspline',
-								fillColor:{
-									linearGradient:{
-										x1:0,
-										y1:0,
-										x2:0,
-										y2:1
-									},
-									stops:[
-										[0, Highcharts.getOptions().colors[0]],
-										[1, Highcharts.Color(Highcharts.getOptions().colors[0]).setOpacity(0).get('rgba')]
-									]
-								}
-							}]
-						});
-					},
-					end:function() {
-						$("#modal").css("display", "none");
-					}
-				});
+	
+    $scope.toggleDisableComment= function(row) {
+        $scope.request("/post/DisableComment", {
+			id: row.Id
+		}, function(data) {
+			window.notie.alert({
+				type: 1,
+				text: data.Message,
+				time: 4
+			});
 		});
-	}
+    }
+    $scope.toggleDisableCopy= function(row) {
+        $scope.request("/post/DisableCopy", {
+			id: row.Id
+		}, function(data) {
+			window.notie.alert({
+				type: 1,
+				text: data.Message,
+				time: 4
+			});
+		});
+    }
 }]);
 myApp.controller("writeblog", ["$scope", "$http", "$timeout", function ($scope, $http, $timeout) {
-	window.hub.stop();
+	clearInterval(window.interval);
 	$scope.post = {
 		Title: "",
 		schedule: false,
 		Content: "",
 		CategoryId: 1,
 		Label: "",
-		Seminars: ""
+		Seminars: "",
+		Keyword:""
 	};
-	$scope.loading();
+	
 	$scope.post.Author = $scope.user.NickName || $scope.user.Username;
 	$scope.post.Email = $scope.user.Email;
 	$scope.getCategory = function () {
-		$scope.loading();
-		$http.post("/category/getcategories", null).then(function (res) {
-			$scope.loadingDone();
-			var data = res.data;
+        $http.post("/category/getcategories", null).then(function (res) {
+            var data = res.data;
 			if (data.Success) {
 				$scope.cat = data.Data;
 				$('.ui.dropdown.category').dropdown({
@@ -365,13 +282,11 @@ myApp.controller("writeblog", ["$scope", "$http", "$timeout", function ($scope, 
 	});
 	//上传Word文档
 	$scope.upload = function() {
-		$scope.loading();
-		$("#fileform").ajaxSubmit({
+        $("#docform").ajaxSubmit({
 			url: "/Upload/UploadWord",
 			type: "post",
 			success: function(data) {
-				$scope.loadingDone();
-				console.log(data);
+                console.log(data);
 				if (data.Success) {
 					window.notie.alert({
 						type: 1,
@@ -380,8 +295,6 @@ myApp.controller("writeblog", ["$scope", "$http", "$timeout", function ($scope, 
 					});
 					$scope.$apply(function() {
 						$scope.post.Content = data.Data.Content;
-						$scope.post.IsWordDocument = true;
-						$scope.post.ResourceName = data.Data.ResourceName;
 						$scope.post.Title = data.Data.Title;
 					});
 					layer.closeAll();
@@ -396,6 +309,7 @@ myApp.controller("writeblog", ["$scope", "$http", "$timeout", function ($scope, 
 		});
 		$scope.selectFile = false;
 	}
+
 	//文件上传
 	$scope.showupload = function() {
 		layui.use("layer", function() {
@@ -404,29 +318,29 @@ myApp.controller("writeblog", ["$scope", "$http", "$timeout", function ($scope, 
 				type: 1,
 				title: '上传Word文档',
 				area: ['420px', '150px'], //宽高
-				content: $("#upfile")
+				content: $("#docfile")
 			});
 		});
 	}
+
 	//异步提交表单开始
 	$scope.submit = function(post) {
-		$scope.loading();
+		Object.keys(post).forEach(key => post[key] == undefined||post[key] == null ? delete post[key] : '');
 		if (!post.Label) {
 			post.Label = null;
 		}
-		if (post.Title.trim().length <= 2 || post.Title.trim().length > 64) {
+		if (post.Title.trim().length <= 2 || post.Title.trim().length > 128) {
 			window.notie.alert({
 				type: 3,
-				text: '文章标题必须在2到64个字符以内！',
+				text: '文章标题必须在2到128个字符以内！',
 				time: 4
 			});
-			$scope.loadingDone();
+			
 			return;
 		}
 		$http.post("/Post/write", post).then(function(res) {
 			var data = res.data;
-			$scope.loadingDone();
-			if (data.Success) {
+            if (data.Success) {
 				window.notie.alert({
 					type: 1,
 					text: data.Message,
@@ -434,8 +348,8 @@ myApp.controller("writeblog", ["$scope", "$http", "$timeout", function ($scope, 
 				});
 				$scope.post.Content = "";
 				$scope.post.Title = "";
-				$scope.post.IsWordDocument = false;
-				$scope.post.ResourceName = "";
+				clearInterval(window.interval);
+				localStorage.removeItem("write-post-draft");
 			} else {
 				window.notie.alert({
 					type: 3,
@@ -445,11 +359,11 @@ myApp.controller("writeblog", ["$scope", "$http", "$timeout", function ($scope, 
 			}
 		});
 	}
-	//异步提交表单结束
+
+	// 定时发布
 	$scope.Scheduled= function() {
-		$scope.post.schedule = !$scope.post.schedule;
-		$timeout(function () {
-			$('#timespan').jeDate({
+        if ($scope.post.schedule) {
+            jeDate('#timespan',{
 				isinitVal: true,
 				festival: true,
 				isTime: true,
@@ -457,19 +371,54 @@ myApp.controller("writeblog", ["$scope", "$http", "$timeout", function ($scope, 
 				format: 'YYYY-MM-DD hh:mm:ss',
 				minDate: new Date().Format("yyyy-MM-dd 00:00:00"),
 				maxDate: '2099-06-16 23:59:59',
-				okfun: function (obj) {
-					$(obj.elem).val(obj.val);
+				donefun: function (obj) {
 					$scope.post.timespan = obj.val;
 				}
 			});
-		}, 0);
+        }
 	}
+
+	//检查草稿
+    if (localStorage.getItem("write-post-draft")) {
+        notie.confirm({
+            text: "检查到上次有未提交的草稿，是否加载？",
+            submitText: "确定",
+            cancelText: "取消",
+            position: "bottom",
+            submitCallback: function () {
+                $scope.post = JSON.parse(localStorage.getItem("write-post-draft"));
+                $scope.$apply();
+                $timeout(function () {
+                    $('.ui.dropdown.category').dropdown('set selected', [$scope.post.CategoryId]);
+                    if ($scope.post.Label) {
+                        $('.ui.dropdown.tags').dropdown('set selected', $scope.post.Label.split(','));
+                    }
+                    if ($scope.post.Keyword) {
+						$('.ui.dropdown.keyword').dropdown('set selected', $scope.post.Keyword.split(','));
+                    }
+                    if ($scope.post.Seminars) {
+                        $('.ui.dropdown.seminar').dropdown('set selected', $scope.post.Seminars.split(','));
+                    }
+                }, 10);
+                window.interval = setInterval(function () {
+		            localStorage.setItem("write-post-draft",JSON.stringify($scope.post));
+	            },5000);
+            },
+            cancelCallback: function() {
+                window.interval = setInterval(function () {
+		            localStorage.setItem("write-post-draft",JSON.stringify($scope.post));
+	            },5000);
+            }
+        });
+    } else {
+        window.interval = setInterval(function () {
+		    localStorage.setItem("write-post-draft",JSON.stringify($scope.post));
+	    },5000);
+    }
 }]);
 myApp.controller("postedit", ["$scope", "$http", "$location", "$timeout", function ($scope, $http, $location, $timeout) {
-	window.hub.stop();
 	$scope.id = $location.search()['id'];
-	$scope.loading();
-	$scope.notify = true;
+	
 	$scope.reserve = true;
 	$scope.request("/post/get", {
 		id: $scope.id
@@ -518,9 +467,9 @@ myApp.controller("postedit", ["$scope", "$http", "$location", "$timeout", functi
 		$('.ui.dropdown.keyword').dropdown('set selected', $scope.post.Keyword.split(','));
 	});
 	$scope.getCategory = function () {
-		$scope.loading();
+		
 		$http.post("/category/getcategories", null).then(function (res) {
-			$scope.loadingDone();
+			
 			var data = res.data;
 			if (data.Success) {
 				$scope.cat = data.Data;
@@ -547,12 +496,12 @@ myApp.controller("postedit", ["$scope", "$http", "$location", "$timeout", functi
 	}
 	//上传Word文档
 	$scope.upload = function () {
-		$scope.loading();
-		$("#fileform").ajaxSubmit({
+		
+		$("#docform").ajaxSubmit({
 			url: "/Upload/UploadWord",
 			type: "post",
 			success: function (data) {
-				$scope.loadingDone();
+				
 				console.log(data);
 				if (data.Success) {
 					window.notie.alert({
@@ -562,8 +511,6 @@ myApp.controller("postedit", ["$scope", "$http", "$location", "$timeout", functi
 					});
 					$scope.$apply(function () {
 						$scope.post.Content = data.Data.Content;
-						$scope.post.IsWordDocument = true;
-						$scope.post.ResourceName = data.Data.ResourceName;
 						$scope.post.Title = data.Data.Title;
 					});
 					layer.closeAll();
@@ -586,24 +533,25 @@ myApp.controller("postedit", ["$scope", "$http", "$location", "$timeout", functi
 				type: 1,
 				title: '上传Word文档',
 				area: ['420px', '150px'], //宽高
-				content: $("#upfile")
+				content: $("#docfile")
 			});
 		});
 	}
 
-	//异步提交表单开始
+	//发布
 	$scope.submit = function (post) {
-		$scope.loading();
+		Object.keys(post).forEach(key => post[key] == undefined||post[key] == null ? delete post[key] : '');
+		
 		if (!post.Label) {
 			post.Label = null;
 		}
-		if (post.Title.trim().length <= 2 || post.Title.trim().length > 64) {
+		if (post.Title.trim().length <= 2 || post.Title.trim().length > 128) {
 			window.notie.alert({
 				type: 3,
-				text: '文章标题必须在2到64个字符以内！',
+				text: '文章标题必须在2到128个字符以内！',
 				time: 4
 			});
-			$scope.loadingDone();
+			
 			return;
 		}
 		if (post.Author.trim().length <= 0 || post.Author.trim().length > 20) {
@@ -612,7 +560,7 @@ myApp.controller("postedit", ["$scope", "$http", "$location", "$timeout", functi
 				text: '再怎么你也应该留个合理的名字吧，非主流的我可不喜欢！',
 				time: 4
 			});
-			$scope.loadingDone();
+			
 			return;
 		}
 		if (!/^\w+([-+.]\w+)*@\w+([-.]\w+)*\.\w+([-.]\w+)*$/
@@ -622,23 +570,22 @@ myApp.controller("postedit", ["$scope", "$http", "$location", "$timeout", functi
 				text: '请输入正确的邮箱格式！',
 				time: 4
 			});
-			$scope.loadingDone();
+			
 			return;
 		}
-		if (post.Content.length < 200 || post.Content.length > 1000000) {
+		if (post.Content.length < 20 || post.Content.length > 1000000) {
 			window.notie.alert({
 				type: 3,
-				text: '文章内容过短或者超长的，我都认为你是在制造垃圾！',
+				text: '文章内容过短或者超长，请修改后再提交！',
 				time: 4
 			});
-			$scope.loadingDone();
+			
 			return;
 		}
-		post.notify = $scope.notify;
 		post.reserve = $scope.reserve;
 		$http.post("/Post/edit", post).then(function (res) {
 			var data = res.data;
-			$scope.loadingDone();
+			
 			if (data.Success) {
 				window.notie.alert({
 					type: 1,
@@ -646,6 +593,8 @@ myApp.controller("postedit", ["$scope", "$http", "$location", "$timeout", functi
 					time: 4
 				});
 				$scope.post = data.Data;
+				clearInterval(window.interval);
+				localStorage.removeItem("post-draft-"+$scope.id);
 			} else {
 				window.notie.alert({
 					type: 3,
@@ -655,160 +604,46 @@ myApp.controller("postedit", ["$scope", "$http", "$location", "$timeout", functi
 			}
 		});
 	}
-	//异步提交表单结束
-}]);
-myApp.controller("toppost", ["$scope", "$http", "$location", "$timeout", function ($scope, $http, $location, $timeout) {
-	window.hub.stop();
-	$scope.isAdd = true;
-	$scope.loading();
-	$scope.post = {};
-	$scope.getdata = function() {
-		$scope.request("/post/gettops", null, function(data) {
-			$scope.tops = data.Data;
-		});
-		$scope.request("/post/getnottops", null, function(data) {
-			$('#post').select3({
-				allowClear: true,
-				items: data.Data,
-				placeholder: '请选择一篇文章'
-			});
-		});
-	}
-	$scope.getdata();
-	$scope.remove = function(post) {
-		swal({
-			title: '确定取消头图页吗？',
-			text: post.Title,
-			type: 'warning',
-			showCancelButton: true,
-			confirmButtonColor: '#3085d6',
-			cancelButtonColor: '#d33',
-			confirmButtonText: '确定',
-			cancelButtonText: '取消'
-		}).then(function(isConfirm) {
-			if (isConfirm) {
-				$scope.loading();
-				$scope.request("/post/RemoveTop", {
-					id: post.Id
-				}, function(data) {
-					swal(data.Message, null, 'success');
-					$scope.getdata();
-				});
-			}
-		}).catch(swal.noop);
-	}
-	$scope.add = function() {
-		//Custombox.open({
-		//	target: '#modal',
-		//	zIndex: 100,
-		//	height: 900
-		//});
-		$scope.post = {};
-		$scope.isAdd = true;
-		layer.open({
-			type: 1,
-			zIndex: 20,
-			title: '设置头图页文章',
-			area: (window.screen.width > 650 ? 650 : window.screen.width) + 'px',// '340px'], //宽高
-			//area: ['650px', '300px'], //宽高
-			content: $("#modal"),
-			cancel: function(index, layero) {
-				setTimeout(function() {
-					$("#modal").css("display", "none");
-				}, 500);
-				return true;
-			}
-		});
-	}
-	$scope.edit = function (item) {
-		$scope.post = item;
-		$scope.isAdd = false;
-		layer.open({
-			type: 1,
-			zIndex: 20,
-			title: '设置头图页文章',
-			area: (window.screen.width > 650 ? 650 : window.screen.width) + 'px',// '340px'], //宽高
-			//area: ['650px', '250px'], //宽高
-			content: $("#modal"),
-			cancel: function(index, layero) {
-				setTimeout(function() {
-					$("#modal").css("display", "none");
-				}, 500);
-				return true;
-			}
-		});
-	}
-	$scope.closeAll= function() {
-		layer.closeAll();
-		setTimeout(function() {
-			$("#modal").css("display", "none");
-		}, 500);
-	}
-	$scope.submit = function(post) {
-		if ($scope.isAdd) {
-			post.Id = $('#post').select3("val");
-		}
-		$scope.request("/post/AddTop", post, function(data) {
-			//Custombox.close();
-			$scope.closeAll();
-			window.notie.alert({
-				type: 1,
-				text: data.Message,
-				time: 4
-			});
-			$scope.getdata();
-			$scope.post.ImageUrl = "";
-			$scope.post.Description = "";
-		});
-	}
-	$scope.upload = function() {
-		swal({
-			title: '请选择一张图片',
-			input: 'file',
-			inputAttributes: {
-				accept: 'image/*'
-			}
-		}).then(function(file) {
-			if (file) {
-				var reader = new FileReader;
-				reader.onload = function (e) {
-					swal({
-						title: "上传预览",
-						text:"确认后将开始上传并应用设置！",
-						imageUrl: e.target.result,
-						showCancelButton: true,
-						confirmButtonColor: '#3085d6',
-						cancelButtonColor: '#d33',
-						confirmButtonText: '开始上传',
-						cancelButtonText: '取消',
-						showLoaderOnConfirm: true,
-						preConfirm: function () {
-							return new Promise(function (resolve, reject) {
-								$http.post("/upload/DecodeDataUri", {
-									data: e.target.result
-								}).then(function (res) {
-									var data = res.data;
-									if (data.Success) {
-										resolve(data.Data);
-									} else {
-										reject(data.Message);
-									}
-								}, function (error) {
-									reject("请求失败，错误码：" + error.status);
-								});
-							});
-						}
-					}).then(function (data) {
-						$scope.post.ImageUrl = data;
-					}).catch(swal.noop);
-				};
-				reader.readAsDataURL(file);
-			}
-		}).catch(swal.noop);
-	}
+	
+	//检查草稿
+    if (localStorage.getItem("post-draft-" + $scope.id)) {
+        notie.confirm({
+            text: "检查到上次有未提交的草稿，是否加载？",
+            submitText: "确定",
+            cancelText: "取消",
+            position: "bottom",
+            submitCallback: function () {
+                $scope.post = JSON.parse(localStorage.getItem("post-draft-" + $scope.id));
+                $scope.$apply();
+                $timeout(function () {
+                    $('.ui.dropdown.category').dropdown('set selected', [$scope.post.CategoryId]);
+					if ($scope.post.Label) {
+                        $('.ui.dropdown.tags').dropdown('set selected', $scope.post.Label.split(','));
+                    }
+                    if ($scope.post.Keyword) {
+						$('.ui.dropdown.keyword').dropdown('set selected', $scope.post.Keyword.split(','));
+                    }
+                    if ($scope.post.Seminars) {
+                        $('.ui.dropdown.seminar').dropdown('set selected', $scope.post.Seminars.split(','));
+                    }
+                }, 10);
+                window.interval = setInterval(function () {
+			        localStorage.setItem("post-draft-"+$scope.id,JSON.stringify($scope.post));
+		        },5000);
+            },
+            cancelCallback: function() {
+                window.interval = setInterval(function () {
+			        localStorage.setItem("post-draft-"+$scope.id,JSON.stringify($scope.post));
+		        },5000);
+            }
+        });
+    } else {
+        window.interval = setInterval(function () {
+			localStorage.setItem("post-draft-"+$scope.id,JSON.stringify($scope.post));
+		},5000);
+    }
 }]);
 myApp.controller("category", ["$scope", "$http", "NgTableParams", function ($scope, $http, NgTableParams) {
-	window.hub.stop();
 	var self = this;
 	var cats = [];
 	self.data = {};
@@ -953,9 +788,8 @@ myApp.controller("category", ["$scope", "$http", "NgTableParams", function ($sco
 	}
 }]);
 myApp.controller("postpending", ["$scope", "$http", "NgTableParams", "$timeout", function ($scope, $http, NgTableParams, $timeout) {
-	window.hub.stop();
 	var self = this;
-	$scope.loading();
+	
 	$scope.kw = "";
 	$scope.orderby = 1;
 	$scope.paginationConf = {
@@ -970,7 +804,7 @@ myApp.controller("postpending", ["$scope", "$http", "NgTableParams", "$timeout",
 		}
 	};
 	this.GetPageData = function(page, size) {
-		$scope.loading();
+		
 		$http.post("/post/GetPending", {
 			page,
 			size,
@@ -985,7 +819,7 @@ myApp.controller("postpending", ["$scope", "$http", "NgTableParams", "$timeout",
 				filterDelay: 0,
 				dataset: res.data.Data
 			});
-			$scope.loadingDone();
+			
 		});
 	};
 	self.del = function(row) {
@@ -1044,14 +878,39 @@ myApp.controller("postpending", ["$scope", "$http", "NgTableParams", "$timeout",
 			_timeout = null;
 		}, 500);
 	}
-	$scope.loadingDone();
-
+	
+	$scope.addToBlock= function(row) {
+		swal({
+			title: "确认添加恶意名单吗？",
+			text: "将"+row.Email+"添加到恶意名单",
+			showCancelButton: true,
+			confirmButtonColor: "#DD6B55",
+			confirmButtonText: "确定",
+			cancelButtonText: "取消",
+			animation: true,
+			allowOutsideClick: false,
+			showLoaderOnConfirm: true,
+			preConfirm: function () {
+				return new Promise(function (resolve, reject) {
+					$http.post("/post/block/"+row.Id).then(function(res) {
+						resolve(res.data);
+					}, function() {
+						reject("请求服务器失败！");
+					});
+				});
+			}
+		}).then(function (data) {
+			if (data.Success) {
+				swal("添加成功",'','success');
+			} else {
+				swal("添加失败",'','error');
+			}
+		}).catch(swal.noop);
+	}
 }]);
 
-myApp.controller("share", ["$scope", "$http", "NgTableParams", function ($scope, $http, NgTableParams) {
-	window.hub.stop();
+myApp.controller("share", ["$scope", "NgTableParams", function ($scope, NgTableParams) {
 	var self = this;
-	var shares = [];
 	self.data = {};
 	this.load = function() {
 		$scope.request("/share", null, function(res) {

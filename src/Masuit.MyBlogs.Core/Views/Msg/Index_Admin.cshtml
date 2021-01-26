@@ -1,17 +1,17 @@
 ﻿@using Masuit.MyBlogs.Core.Models.DTO
 @using Masuit.MyBlogs.Core.Models.ViewModel
-@using Masuit.MyBlogs.Core.Extensions
+@using Masuit.Tools.Core.Net
 @{
     ViewBag.Title = "留言板";
     Layout = "~/Views/Shared/_Layout.cshtml";
-    UserInfoOutputDto user = Context.Session.GetByRedis<UserInfoOutputDto>(SessionKey.UserInfo);
+    UserInfoDto user = Context.Session.Get<UserInfoDto>(SessionKey.UserInfo);
     string cid = string.IsNullOrEmpty(Context.Request.Query["cid"]) ? "0" : Context.Request.Query["cid"].ToString();
 }
 <link href="~/Assets/layui/css/layui.min.css" rel="stylesheet" />
 <script src="~/Assets/layui/layui.all.js"></script>
-<div class="container min-height780">
+<div class="container min-height610">
     <ol class="cd-breadcrumb triangle">
-        <li>@Html.ActionLink("首页", "Index", "Home")</li>
+        <li><a asp-controller="Home" asp-action="Index">首页</a></li>
         <li class="current"><em>@ViewBag.Title</em></li>
     </ol>
     <form class="form-horizontal animated pulse" id="msg-form" method="post">
@@ -24,11 +24,13 @@
         <div class="form-group overlay animated fadeInDown" style="margin-bottom: 0px !important;">
             <textarea class="layui-textarea" id="layedit" name="Content" style="height: 200px"></textarea>
         </div>
+        <input type="hidden" name="Agree" value="true" />
         <div class="form-group">
             <div class="col-xs-12">
                 <button type="submit" class="btn btn-info btn-lg">
                     发表留言
                 </button>
+                <a class="text-red">留言框可粘贴网络图片</a>
             </div>
         </div>
     </form>
@@ -52,6 +54,7 @@
             <div class="form-group overlay animated fadeInDown">
                 <textarea class="layui-textarea" id="layedit2" name="Content" style="height: 80px"></textarea>
             </div>
+            <input type="hidden" name="Agree" value="true" />
             <div class="form-group">
                 <div class="col-xs-12">
                     <div class="btn-group">
@@ -76,10 +79,7 @@
 			count: @ViewBag.TotalCount ,
 			toolbar: true,
 			callback: function(page, size, count) {
-				$.post("/msg/getmsgs", {
-					page: page,
-					size: size
-                }, (data) => {
+                $.get("/msg/getmsgs?page=" + page + "&size=" + size, function (data) {
                     data = data.Data;
                     if (data) {
                         document.querySelector(".media-list").innerHTML = loadParentMsgs(data);
@@ -106,22 +106,27 @@
             var startfloor = data.parentTotal - (page - 1) * size;
             for (let i = 0; i < rows.length; i++) {
                 html += `<li class="msg-list media animated fadeInRight" id='${rows[i].Id}'>
-                                <div class="media-body">
-                                    <article class="panel panel-info">
-                                        <header class="panel-heading">${startfloor}# ${rows[i].IsMaster ? `<i class="icon icon-user"></i>` : ""}${rows[i].NickName}${rows[i].IsMaster ? `(管理员)` : ""}
-                                            <span class="pull-right" style="font-size: 10px;">${rows[i].Status == 4 ? `<a class="label label-success" onclick="pass(${rows[i].Id})">通过</a> |` : ""} <a class="label label-danger" onclick="del(${rows[i].Id})">删除</a> | ${rows[i].PostDate}<span class="hidden-sm hidden-xs"> | ${GetOperatingSystem(rows[i].OperatingSystem) + " | " + GetBrowser(rows[i].Browser)}</span></span>
-                                        </header>
-                                        <div class="panel-body">
-                                            ${rows[i].Content} <a class="btn btn-sm btn-info" href="?uid=${rows[i].Id}">回复</a>
-                                            <div class="pull-right">
-                                                <span class="label label-success">${rows[i].Email}</span>
-                                                <span class="label label-primary">${rows[i].QQorWechat}</span>
-                                            </div>
-                                            ${loadMsgs(data.rows, Enumerable.From(data.rows).Where(c => c.ParentId === rows[i].Id).OrderBy(c => c.PostDate).ToArray(), startfloor--)}
+                            <div class="media-body">
+                                <article class="panel panel-info">
+                                    <header class="panel-heading">${startfloor}# ${rows[i].IsMaster ? `<i class="icon icon-user"></i>` : ""}${rows[i].NickName}${rows[i].IsMaster ? `(管理员)` : ""} | ${rows[i].PostDate}
+                                        <span class="pull-right" style="font-size: 10px;">${rows[i].Status == 4 ? `<a class="label label-success" onclick="pass(${rows[i].Id})">通过</a> |` : ""} <a class="label label-danger" onclick="del(${rows[i].Id})">删除</a><span class="hidden-sm hidden-xs"> | ${GetOperatingSystem(rows[i].OperatingSystem) + " | " + GetBrowser(rows[i].Browser)}</span></span>
+                                    </header>
+                                    <div class="panel-body">
+                                        ${rows[i].Content} <a class="label label-info" href="?uid=${rows[i].Id}"><i class="icon-comment"></i></a>
+                                        <div class="margin-top10"></div>
+                                        <div class="pull-left">
+                                            <span class="label label-success">${rows[i].IP}</span>
+                                            <span class="label label-primary">${rows[i].Location}</span>
                                         </div>
-                                    </article>
-                                </div>
-                            </li>`;
+                                        <div class="pull-right">
+                                            <span class="label label-success" onclick="bounceEmail('${rows[i].Email}')">${rows[i].Email}</span>
+                                            <span class="label label-primary">${rows[i].QQorWechat}</span>
+                                        </div><br/>
+                                        ${loadMsgs(data.rows, Enumerable.From(data.rows).Where(c => c.ParentId === rows[i].Id).OrderBy(c => c.PostDate).ToArray(), startfloor--)}
+                                    </div>
+                                </article>
+                            </div>
+                        </li>`;
             }
 		}
         loadingDone();
@@ -137,20 +142,25 @@
         Enumerable.From(msg).ForEach((item, index) => {
             var color = colors[depth % 5];
             html += `<article id="${item.Id}" class="panel panel-${color}">
-                            <div class="panel-heading">
-                                ${depth}-${floor++}# ${item.IsMaster ?`<i class="icon icon-user"></i>`:""}${item.NickName}${item.IsMaster ?`(管理员)`:""}
-                                <span class="pull-right" style="font-size: 10px;">${item.Status == 4 ? `<a class="label label-success" onclick="pass(${item.Id})">通过</a> |`:""} <a class="label label-danger" onclick="del(${item.Id})">删除</a> | ${item.PostDate}<span class="hidden-sm hidden-xs"> | ${GetOperatingSystem(item.OperatingSystem) + " | " + GetBrowser(item.Browser)}</span></span>
+                        <div class="panel-heading">
+                            ${depth}-${floor++}# ${item.IsMaster ? `<i class="icon icon-user"></i>` : ""}${item.NickName}${item.IsMaster ? `(管理员)` : ""} | ${item.PostDate}
+                            <span class="pull-right hidden-sm hidden-xs" style="font-size: 10px;">${item.Status == 4 ? `<a class="label label-success" onclick="pass(${item.Id})">通过</a> |`:""} <a class="label label-danger" onclick="del(${item.Id})">删除</a> | ${GetOperatingSystem(item.OperatingSystem) + " | " + GetBrowser(item.Browser)}</span>
+                        </div>
+                        <div class="panel-body">
+                            ${item.Content}
+                            <a class="label label-${color}" href="?uid=${item.Id}"><i class="icon-comment"></i></a>
+                            <div class="margin-top10"></div>
+                            <div class="pull-left">
+                                <span class="label label-success">${item.IP}</span>
+                                <span class="label label-primary">${item.Location}</span>
                             </div>
-                            <div class="panel-body">
-                                ${item.Content}
-                                <a class="btn btn-sm btn-${color}" href="?uid=${item.Id}">回复</a>
-                                <div class="pull-right">
-                                    <span class="label label-success">${item.Email}</span>
-                                    <span class="label label-primary">${item.QQorWechat}</span>
-                                </div>
-                                ${loadMsgs(data, Enumerable.From(data).Where(c => c.ParentId === item.Id).OrderBy(c => c.PostDate), root, depth)}
-                            </div>
-                        </article>`;
+                            <div class="pull-right">
+                                <span class="label label-success" onclick="bounceEmail('${item.Email}')">${item.Email}</span>
+                                <span class="label label-primary">${item.QQorWechat}</span>
+                            </div><br/>
+                            ${loadMsgs(data, Enumerable.From(data).Where(c => c.ParentId === item.Id).OrderBy(c => c.PostDate), root, depth)}
+                        </div>
+                    </article>`;
         });
         return html;
     }
@@ -162,6 +172,25 @@
 			swal(res.Message, "", res.Success ? "success" : "error");
 			getmsgs();
 		});
+    }
+
+    function bounceEmail(email) {
+        swal({
+            title: "确定将这个邮箱添加到黑名单吗？",
+            showCancelButton: true,
+            confirmButtonColor: "#DD6B55",
+            confirmButtonText: "确定",
+            cancelButtonText: "取消",
+            showLoaderOnConfirm: true,
+            animation: true,
+            allowOutsideClick: false
+        }).then(function () {
+            window.post("/system/BounceEmail", { email: email }, function () {
+                swal("邮箱添加到黑名单成功", "", "success");
+            }, (e) => {
+                swal("操作失败，请稍候再试", "", "error");
+            });
+        }, function () { });
     }
 
     function del(id) {
@@ -181,19 +210,14 @@
 			    swal(res.Message, "", res.Success ? "success" : "error");
 			    getmsgs();
 		    });
-        }, function () {
-        });
+        }, function () {});
     }
 
     /**
    * 获取留言
    */
     function getmsgs() {
-		$.post("/msg/getmsgs", {
-			page: 1,
-            size: 10,
-            cid:@cid
-		}, (data) => {
+		$.get("/msg/getmsgs?page=1&size=10&cid=" +@cid, (data) => {
             data = data.Data;
 			document.querySelector(".media-list").innerHTML = loadParentMsgs(data);
 			bindReplyBtn();

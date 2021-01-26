@@ -1,20 +1,13 @@
-﻿namespace Masuit.MyBlogs.Core.Models.ViewModel
+﻿using System;
+
+namespace Masuit.MyBlogs.Core.Models.ViewModel
 {
     /// <summary>
     /// 文章数据模型
     /// </summary>
-    public class PostDataModel
+    public class PostDataModel : PostModelBase
     {
-        /// <summary>
-        /// id
-        /// </summary>
-        public int Id { get; set; }
-
         public string Status { get; set; }
-        /// <summary>
-        /// 标题
-        /// </summary>
-        public string Title { get; set; }
 
         /// <summary>
         /// 作者
@@ -29,27 +22,17 @@
         /// <summary>
         /// 发表时间
         /// </summary>
-        public string PostDate { get; set; }
+        public DateTime PostDate { get; set; }
 
         /// <summary>
         /// 修改时间
         /// </summary>
-        public string ModifyDate { get; set; }
+        public DateTime ModifyDate { get; set; }
 
         /// <summary>
         /// 是否置顶
         /// </summary>
         public bool IsFixedTop { get; set; }
-
-        /// <summary>
-        /// 资源名
-        /// </summary>
-        public string ResourceName { get; set; }
-
-        /// <summary>
-        /// 是否是Word文档
-        /// </summary>
-        public bool IsWordDocument { get; set; }
 
         /// <summary>
         /// 作者邮箱
@@ -77,6 +60,16 @@
         /// 修改次数
         /// </summary>
         public int ModifyCount { get; set; }
+
+        /// <summary>
+        /// 禁止评论
+        /// </summary>
+        public bool DisableComment { get; set; }
+
+        /// <summary>
+        /// 禁止转载
+        /// </summary>
+        public bool DisableCopy { get; set; }
 
     }
 }

@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading.Tasks;
 
 namespace Masuit.MyBlogs.Core.Extensions.UEditor
 {
@@ -34,7 +35,7 @@ namespace Masuit.MyBlogs.Core.Extensions.UEditor
             _pathToList = pathToList;
         }
 
-        public override string Process()
+        public override Task<string> Process()
         {
             try
             {
@@ -44,7 +45,7 @@ namespace Masuit.MyBlogs.Core.Extensions.UEditor
             catch (FormatException)
             {
                 _state = ResultState.InvalidParam;
-                return WriteResult();
+                return Task.FromResult(WriteResult());
             }
             var buildingList = new List<string>();
             try
@@ -66,8 +67,7 @@ namespace Masuit.MyBlogs.Core.Extensions.UEditor
             {
                 _state = ResultState.IOError;
             }
-            var result = WriteResult();
-            return result;
+            return Task.FromResult(WriteResult());
         }
 
         private string WriteResult()
@@ -87,20 +87,15 @@ namespace Masuit.MyBlogs.Core.Extensions.UEditor
 
         private string GetStateString()
         {
-            switch (_state)
+            return _state switch
             {
-                case ResultState.Success:
-                    return "SUCCESS";
-                case ResultState.InvalidParam:
-                    return "参数不正确";
-                case ResultState.PathNotFound:
-                    return "路径不存在";
-                case ResultState.AuthorizError:
-                    return "文件系统权限不足";
-                case ResultState.IOError:
-                    return "文件系统读取错误";
-            }
-            return "未知错误";
+                ResultState.Success => "SUCCESS",
+                ResultState.InvalidParam => "参数不正确",
+                ResultState.PathNotFound => "路径不存在",
+                ResultState.AuthorizError => "文件系统权限不足",
+                ResultState.IOError => "文件系统读取错误",
+                _ => "未知错误"
+            };
         }
     }
 }

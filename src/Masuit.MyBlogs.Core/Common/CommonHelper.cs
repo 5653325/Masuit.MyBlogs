@@ -1,26 +1,28 @@
-﻿using System;
+﻿using AutoMapper;
+using Hangfire;
+using HtmlAgilityPack;
+using IP2Region;
+using Masuit.MyBlogs.Core.Common.Mails;
+using Masuit.Tools;
+using Masuit.Tools.Media;
+using MaxMind.GeoIP2;
+using MaxMind.GeoIP2.Exceptions;
+using MaxMind.GeoIP2.Responses;
+using Microsoft.Extensions.DependencyInjection;
+using Polly;
+using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Drawing;
 using System.IO;
 using System.Linq;
-using System.Net.Http;
-using System.Net.Http.Headers;
-using Hangfire;
-using Masuit.Tools;
-using Masuit.Tools.Html;
-using Masuit.Tools.Media;
-#if !DEBUG
-using Masuit.MyBlogs.Core.Models.ViewModel;
-using Masuit.Tools.Models;
-#endif
-using Masuit.Tools.Security;
-using Microsoft.AspNetCore.Http;
-using Microsoft.Net.Http.Headers;
-using Newtonsoft.Json;
-using Newtonsoft.Json.Linq;
-using ContentDispositionHeaderValue = System.Net.Http.Headers.ContentDispositionHeaderValue;
+using System.Net;
+using System.Net.Sockets;
+using System.Text;
+using System.Threading;
+using TimeZoneConverter;
 
-namespace Common
+namespace Masuit.MyBlogs.Core.Common
 {
     /// <summary>
     /// 公共类库
@@ -29,25 +31,32 @@ namespace Common
     {
         static CommonHelper()
         {
-            BanRegex = File.ReadAllText(Path.Combine(AppContext.BaseDirectory + "App_Data", "ban.txt"));
-            ModRegex = File.ReadAllText(Path.Combine(AppContext.BaseDirectory + "App_Data", "mod.txt"));
-            DenyIP = File.ReadAllText(Path.Combine(AppContext.BaseDirectory + "App_Data", "denyip.txt"));
-            DenyAreaIP = JsonConvert.DeserializeObject<ConcurrentDictionary<string, HashSet<string>>>(File.ReadAllText(Path.Combine(AppContext.BaseDirectory + "App_Data", "denyareaip.txt")));
-            string[] lines = File.ReadAllLines(Path.Combine(AppContext.BaseDirectory + "App_Data", "DenyIPRange.txt"));
-            DenyIPRange = new Dictionary<string, string>();
-            foreach (string line in lines)
+            ThreadPool.QueueUserWorkItem(_ =>
             {
-                try
+                while (true)
                 {
-                    var strs = line.Split(' ');
-                    DenyIPRange[strs[0]] = strs[1];
-                }
-                catch (IndexOutOfRangeException)
-                {
-                }
-            }
+                    BanRegex = File.ReadAllText(Path.Combine(AppContext.BaseDirectory + "App_Data", "ban.txt"), Encoding.UTF8);
+                    ModRegex = File.ReadAllText(Path.Combine(AppContext.BaseDirectory + "App_Data", "mod.txt"), Encoding.UTF8);
+                    DenyIP = File.ReadAllText(Path.Combine(AppContext.BaseDirectory + "App_Data", "denyip.txt"), Encoding.UTF8);
+                    string[] lines = File.ReadAllLines(Path.Combine(AppContext.BaseDirectory + "App_Data", "DenyIPRange.txt"), Encoding.UTF8);
+                    DenyIPRange = new Dictionary<string, string>();
+                    foreach (string line in lines)
+                    {
+                        try
+                        {
+                            var strs = line.Split(' ');
+                            DenyIPRange[strs[0]] = strs[1];
+                        }
+                        catch (IndexOutOfRangeException)
+                        {
+                        }
+                    }
 
-            IPWhiteList = File.ReadAllText(Path.Combine(AppContext.BaseDirectory + "App_Data", "whitelist.txt")).Split(',', '，');
+                    IPWhiteList = File.ReadAllText(Path.Combine(AppContext.BaseDirectory + "App_Data", "whitelist.txt")).Split(',', '，').ToList();
+                    Console.WriteLine("刷新公共数据...");
+                    Thread.Sleep(TimeSpan.FromMinutes(10));
+                }
+            });
         }
 
         /// <summary>
@@ -66,60 +75,19 @@ namespace Common
         public static string DenyIP { get; set; }
 
         /// <summary>
-        /// 按地区禁用ip
-        /// </summary>
-        public static ConcurrentDictionary<string, HashSet<string>> DenyAreaIP { get; set; }
-
-        /// <summary>
         /// ip白名单
         /// </summary>
-        public static IEnumerable<string> IPWhiteList { get; set; }
+        public static List<string> IPWhiteList { get; set; }
 
         /// <summary>
         /// 每IP错误的次数统计
         /// </summary>
-        public static ConcurrentDictionary<string, int> IPErrorTimes { get; set; } = new ConcurrentDictionary<string, int>();
+        public static ConcurrentDictionary<string, int> IPErrorTimes { get; set; } = new();
 
         /// <summary>
         /// 系统设定
         /// </summary>
-        public static Dictionary<string, string> SystemSettings { get; set; }
-        /// <summary>
-        /// 访问量
-        /// </summary>
-        public static double InterviewCount
-        {
-            get
-            {
-                try
-                {
-                    return RedisHelper.Get<double>("Interview:ViewCount");
-                }
-                catch
-                {
-                    return 1;
-                }
-            }
-        }
-
-        /// <summary>
-        /// 平均访问量
-        /// </summary>
-        public static double AverageCount
-        {
-            get
-            {
-                try
-                {
-                    return RedisHelper.Get<double>("Interview:ViewCount") / RedisHelper.Get<double>("Interview:RunningDays");
-
-                }
-                catch
-                {
-                    return 1;
-                }
-            }
-        }
+        public static ConcurrentDictionary<string, string> SystemSettings { get; set; } = new();
 
         /// <summary>
         /// 网站启动时间
@@ -143,7 +111,99 @@ namespace Common
                 return false;
             }
 
-            return DenyAreaIP.SelectMany(x => x.Value).Union(DenyIP.Split(',')).Contains(ip) || DenyIPRange.Any(kv => kv.Key.StartsWith(ip.Split('.')[0]) && ip.IpAddressInRange(kv.Key, kv.Value));
+            return DenyIP.Contains(ip) ||
+                DenyIPRange.AsParallel().Any(kv => kv.Key.StartsWith(ip.Split('.')[0]) && ip.IpAddressInRange(kv.Key, kv.Value));
+        }
+
+        /// <summary>
+        /// 是否是禁区
+        /// </summary>
+        /// <param name="ips"></param>
+        /// <returns></returns>
+        public static bool IsInDenyArea(this string ips)
+        {
+            var denyAreas = SystemSettings.GetOrAdd("DenyArea", "").Split(new[] { ',', '，' }, StringSplitOptions.RemoveEmptyEntries);
+            if (denyAreas.Any())
+            {
+                foreach (var item in ips.Split(','))
+                {
+                    var pos = GetIPLocation(item);
+                    return pos.Contains(denyAreas) || denyAreas.Intersect(pos.Split("|")).Any();
+                }
+            }
+
+            return false;
+        }
+
+        private static readonly DbSearcher IPSearcher = new(Path.Combine(AppContext.BaseDirectory + "App_Data", "ip2region.db"));
+        public static readonly DatabaseReader MaxmindReader = new(Path.Combine(AppContext.BaseDirectory + "App_Data", "GeoLite2-City.mmdb"));
+        private static readonly DatabaseReader MaxmindAsnReader = new(Path.Combine(AppContext.BaseDirectory + "App_Data", "GeoLite2-ASN.mmdb"));
+
+        public static AsnResponse GetIPAsn(this string ip)
+        {
+            if (ip.IsPrivateIP())
+            {
+                return new AsnResponse();
+            }
+
+            return Policy<AsnResponse>.Handle<AddressNotFoundException>().Fallback(new AsnResponse()).Execute(() => MaxmindAsnReader.Asn(ip));
+        }
+
+        public static AsnResponse GetIPAsn(this IPAddress ip)
+        {
+            return Policy<AsnResponse>.Handle<AddressNotFoundException>().Fallback(new AsnResponse()).Execute(() => MaxmindAsnReader.Asn(ip));
+        }
+
+        public static string GetIPLocation(this string ips)
+        {
+            var (location, network) = GetIPLocation(IPAddress.Parse(ips));
+            return location + "|" + network;
+        }
+
+        public static (string location, string network) GetIPLocation(this IPAddress ip)
+        {
+            switch (ip.AddressFamily)
+            {
+                case AddressFamily.InterNetwork when ip.IsPrivateIP():
+                case AddressFamily.InterNetworkV6 when ip.IsPrivateIP():
+                    return ("内网", "内网IP");
+                case AddressFamily.InterNetworkV6 when ip.IsIPv4MappedToIPv6:
+                    ip = ip.MapToIPv4();
+                    goto case AddressFamily.InterNetwork;
+                case AddressFamily.InterNetwork:
+                    var parts = IPSearcher.MemorySearch(ip.ToString())?.Region.Split('|');
+                    if (parts != null)
+                    {
+                        var asn = GetIPAsn(ip);
+                        var network = parts[^1] == "0" ? asn.AutonomousSystemOrganization : parts[^1];
+                        var location = parts[..^1].Where(s => s != "0").Distinct().Join("");
+                        return (location, network + $"(AS{asn.AutonomousSystemNumber})");
+                    }
+
+                    goto default;
+                default:
+                    var cityResp = Policy<CityResponse>.Handle<AddressNotFoundException>().Fallback(new CityResponse()).Execute(() => MaxmindReader.City(ip));
+                    var asnResp = GetIPAsn(ip);
+                    return (cityResp.Country.Names.GetValueOrDefault("zh-CN") + cityResp.City.Names.GetValueOrDefault("zh-CN"), asnResp.AutonomousSystemOrganization + $"(AS{asnResp.AutonomousSystemNumber})");
+            }
+        }
+
+        /// <summary>
+        /// 获取ip所在时区
+        /// </summary>
+        /// <param name="ip"></param>
+        /// <returns></returns>
+        public static string GetClientTimeZone(this IPAddress ip)
+        {
+            switch (ip.AddressFamily)
+            {
+                case AddressFamily.InterNetwork when ip.IsPrivateIP():
+                case AddressFamily.InterNetworkV6 when ip.IsPrivateIP():
+                    return "Asia/Shanghai";
+                default:
+                    var resp = Policy<CityResponse>.Handle<AddressNotFoundException>().Fallback(new CityResponse()).Execute(() => MaxmindReader.City(ip));
+                    return resp.Location.TimeZone ?? "Asia/Shanghai";
+            }
         }
 
         /// <summary>
@@ -152,7 +212,7 @@ namespace Common
         /// <typeparam name="T"></typeparam>
         /// <param name="source"></param>
         /// <returns></returns>
-        public static T Mapper<T>(this object source) where T : class => AutoMapper.Mapper.Map<T>(source);
+        public static T Mapper<T>(this object source) where T : class => Startup.ServiceProvider.GetRequiredService<IMapper>().Map<T>(source);
 
         /// <summary>
         /// 发送邮件
@@ -160,428 +220,131 @@ namespace Common
         /// <param name="title">标题</param>
         /// <param name="content">内容</param>
         /// <param name="tos">收件人</param>
-        public static void SendMail(string title, string content, string tos)
+        /// <param name="clientip"></param>
+        [AutomaticRetry(Attempts = 1, OnAttemptsExceeded = AttemptsExceededAction.Delete)]
+        public static void SendMail(string title, string content, string tos, string clientip)
         {
-#if !DEBUG
-            new Email()
-            {
-                EnableSsl = true,
-                Body = content,
-                SmtpServer = EmailConfig.Smtp,
-                Username = EmailConfig.SendFrom,
-                Password = EmailConfig.EmailPwd,
-                SmtpPort = SystemSettings["SmtpPort"].ToInt32(),
-                Subject = title,
-                Tos = tos
-            }.Send();
-#endif
+            Startup.ServiceProvider.GetRequiredService<IMailSender>().Send(title, content, tos);
+            RedisHelper.SAdd($"Email:{DateTime.Now:yyyyMMdd}", new { title, content, tos, time = DateTime.Now, clientip });
+            RedisHelper.Expire($"Email:{DateTime.Now:yyyyMMdd}", 86400);
         }
 
         /// <summary>
-        /// 上传图片到新浪图床
+        /// 清理html的img标签的除src之外的其他属性
         /// </summary>
-        /// <param name="file">文件名</param>
+        /// <param name="html"></param>
         /// <returns></returns>
-        public static (string, bool) UploadImage(string file)
+        public static string ClearImgAttributes(this string html)
         {
-            string ext = Path.GetExtension(file);
-            if (!File.Exists(file))
+            var doc = new HtmlDocument();
+            doc.LoadHtml(html);
+            var nodes = doc.DocumentNode.Descendants("img");
+            foreach (var node in nodes)
             {
-                return ("", false);
-            }
-            long fileLength = new FileInfo(file).Length;
-            if (fileLength > 5 * 1024 * 1024)
-            {
-                if (!ext.Equals(".jpg", StringComparison.InvariantCultureIgnoreCase))
-                {
-                    return ("", false);
-                }
-
-                using (var stream = File.OpenRead(file))
-                {
-                    string newfile = Path.Combine(Environment.GetEnvironmentVariable("temp"), "".CreateShortToken(16) + ext);
-                    using (FileStream fs = new FileStream(newfile, FileMode.OpenOrCreate, FileAccess.ReadWrite))
-                    {
-                        ImageUtilities.CompressImage(stream, fs, 100, 5120);
-                        return UploadImage(newfile);
-                    }
-                }
+                node.Attributes.RemoveWhere(a => !new[] { "src", "data-original", "width", "style", "class" }.Contains(a.Name));
             }
 
-            string[] apis =
-            {
-                "https://tu.xiangkanju.com/Zs_UP.php?type=multipart",
-                "https://api.yum6.cn/sinaimg.php?type=multipart",
-            };
-            int index = 0;
-            string url = string.Empty;
-            bool success = false;
-            for (int i = 0; i < apis.Length; i++)
-            {
-                using (HttpClient httpClient = new HttpClient())
-                {
-                    httpClient.DefaultRequestHeaders.UserAgent.Add(ProductInfoHeaderValue.Parse("Mozilla/5.0"));
-                    httpClient.DefaultRequestHeaders.Referrer = new Uri(apis[i]);
-                    using (var stream = File.OpenRead(file))
-                    {
-                        using (var bc = new StreamContent(stream))
-                        {
-                            bc.Headers.ContentDisposition = new ContentDispositionHeaderValue("attachment")
-                            {
-                                FileName = "".MDString() + ext,
-                                Name = "file"
-                            };
-                            using (var content = new MultipartFormDataContent
-                            {
-                                bc
-                            })
-                            {
-                                var code = httpClient.PostAsync(apis[index], content).ContinueWith(t =>
-                                {
-                                    if (t.IsCanceled || t.IsFaulted)
-                                    {
-                                        return 0;
-                                    }
-
-                                    var res = t.Result;
-                                    if (res.IsSuccessStatusCode)
-                                    {
-                                        try
-                                        {
-                                            string s = res.Content.ReadAsStringAsync().Result;
-                                            var token = JObject.Parse(s);
-                                            switch (index)
-                                            {
-                                                case 0:
-                                                    s = (string)token["code"];
-                                                    if (s.Equals("200"))
-                                                    {
-                                                        url = (string)token["pid"];
-                                                        return 1;
-                                                    }
-
-                                                    return 2;
-                                                case 1:
-                                                    s = (string)token["code"];
-                                                    if (s.Equals("200"))
-                                                    {
-                                                        url = ((string)token["url"]).Replace("thumb150", "large");
-                                                        return 1;
-                                                    }
-
-                                                    return 2;
-                                            }
-                                            if (url.Length < 40)
-                                            {
-                                                return 2;
-                                            }
-                                        }
-                                        catch
-                                        {
-                                            return 2;
-                                        }
-                                    }
-
-                                    return 2;
-                                }).Result;
-                                if (code == 1)
-                                {
-                                    success = true;
-                                    break;
-                                }
-
-                                if (code == 0 || code == 2)
-                                {
-                                    index++;
-                                    if (index == apis.Length)
-                                    {
-                                        Console.WriteLine("所有上传接口都挂掉了，重试人民网图床");
-                                        return UploadPeople(file);
-                                    }
-
-                                    Console.WriteLine("正在准备重试图片上传接口：" + apis[index]);
-                                    continue;
-                                }
-
-                                Console.WriteLine("准备重试上传图片");
-                            }
-                        }
-                    }
-                }
-            }
-
-            return (url.Replace("/thumb150/", "/large/"), success);
-        }
-        /// <summary>
-        /// 上传图片到人民网图床
-        /// </summary>
-        /// <param name="file"></param>
-        /// <returns></returns>
-        public static (string url, bool success) UploadPeople(string file)
-        {
-            bool success = false;
-            using (var httpClient = new HttpClient())
-            {
-                httpClient.DefaultRequestHeaders.UserAgent.Add(ProductInfoHeaderValue.Parse("Chrome/72.0.3626.96"));
-                using (var stream = File.OpenRead(file))
-                {
-                    using (var sc = new StreamContent(stream))
-                    {
-                        using (var mc = new MultipartFormDataContent
-                        {
-                            { sc, "Filedata", Path.GetFileName(file) },
-                            {new StringContent("."+Path.GetExtension(file)),"filetype"}
-                        })
-                        {
-                            var str = httpClient.PostAsync("http://bbs1.people.com.cn/postImageUpload.do", mc).ContinueWith(t =>
-                            {
-                                if (t.IsCompletedSuccessfully)
-                                {
-                                    var res = t.Result;
-                                    if (res.IsSuccessStatusCode)
-                                    {
-                                        string result = res.Content.ReadAsStringAsync().Result;
-                                        string url = "http://bbs1.people.com.cn" + (string)JObject.Parse(result)["imageUrl"];
-                                        if (url.EndsWith(Path.GetExtension(file)))
-                                        {
-                                            success = true;
-                                            return url;
-                                        }
-                                    }
-                                }
-
-                                return "";
-                            }).Result;
-                            if (!success)
-                            {
-                                Console.WriteLine("人民网图床上传接口都挂掉了，重试sm.ms图床");
-                                return UploadImageFallback(file);
-                            }
-                            return (str, success);
-                        }
-                    }
-                }
-            }
+            return doc.DocumentNode.OuterHtml;
         }
 
         /// <summary>
-        /// 上传图片到sm图床
+        /// 将html的img标签的src属性名替换成data-original
         /// </summary>
-        /// <param name="file">文件名</param>
+        /// <param name="html"></param>
+        /// <param name="title"></param>
         /// <returns></returns>
-        private static (string, bool) UploadImageFallback(string file)
+        public static string ReplaceImgAttribute(this string html, string title)
         {
-            string url = string.Empty;
-            bool success = false;
-            string ext = Path.GetExtension(file);
-            using (HttpClient httpClient = new HttpClient())
+            var doc = new HtmlDocument();
+            doc.LoadHtml(html);
+            var nodes = doc.DocumentNode.Descendants("img");
+            foreach (var node in nodes)
             {
-                httpClient.DefaultRequestHeaders.UserAgent.Add(ProductInfoHeaderValue.Parse("Mozilla/5.0"));
-                using (var stream = File.OpenRead(file))
+                if (node.Attributes.Contains("src"))
                 {
-                    using (var bc = new StreamContent(stream))
-                    {
-                        bc.Headers.ContentDisposition = new ContentDispositionHeaderValue("attachment")
-                        {
-                            FileName = "".CreateShortToken() + ext,
-                            Name = "smfile"
-                        };
-                        using (var content = new MultipartFormDataContent
-                        {
-                            bc
-                        })
-                        {
-                            var code = httpClient.PostAsync("https://sm.ms/api/upload?inajax=1&ssl=1", content).ContinueWith(t =>
-                            {
-                                if (t.IsCanceled || t.IsFaulted)
-                                {
-                                    return 0;
-                                }
-
-                                var res = t.Result;
-                                if (res.IsSuccessStatusCode)
-                                {
-                                    string s = res.Content.ReadAsStringAsync().Result;
-                                    var token = JObject.Parse(s);
-                                    url = (string)token["data"]["url"];
-                                    return 1;
-                                }
-
-                                return 2;
-                            }).Result;
-                            if (code == 1)
-                            {
-                                success = true;
-                            }
-                        }
-                    }
+                    string src = node.Attributes["src"].Value;
+                    node.Attributes.Remove("src");
+                    node.Attributes.Add("data-original", src);
+                    node.Attributes.Add("alt", SystemSettings["Title"]);
+                    node.Attributes.Add("title", title);
                 }
             }
 
-            if (success)
-            {
-                return (url, success);
-            }
-
-            return UploadImageFallback2(file);
+            return doc.DocumentNode.OuterHtml;
         }
 
         /// <summary>
-        /// 上传图片到新浪图床
+        /// 获取文章摘要
         /// </summary>
-        /// <param name="file">文件名</param>
+        /// <param name="html"></param>
+        /// <param name="length">截取长度</param>
+        /// <param name="min">摘要最少字数</param>
         /// <returns></returns>
-        private static (string, bool) UploadImageFallback2(string file)
+        public static string GetSummary(this string html, int length = 150, int min = 10)
         {
-            string url = string.Empty;
-            bool success = false;
-            string ext = Path.GetExtension(file);
-            using (HttpClient httpClient = new HttpClient())
+            var doc = new HtmlDocument();
+            doc.LoadHtml(html);
+            var summary = doc.DocumentNode.Descendants("p").FirstOrDefault(n => n.InnerText.Length > min)?.InnerText ?? "没有摘要";
+            if (summary.Length > length)
             {
-                httpClient.DefaultRequestHeaders.UserAgent.Add(ProductInfoHeaderValue.Parse("Mozilla/5.0"));
-                using (var stream = File.OpenRead(file))
+                return summary.Substring(0, length) + "...";
+            }
+
+            return summary;
+        }
+
+        public static string TrimQuery(this string path)
+        {
+            return path.Split('&').Where(s => s.Split('=', StringSplitOptions.RemoveEmptyEntries).Length == 2).Join("&");
+        }
+
+        /// <summary>
+        /// 添加水印
+        /// </summary>
+        /// <param name="stream"></param>
+        /// <returns></returns>
+        public static Stream AddWatermark(this Stream stream)
+        {
+            if (!string.IsNullOrEmpty(SystemSettings.GetOrAdd("Watermark", string.Empty)))
+            {
+                try
                 {
-                    using (var bc = new StreamContent(stream))
+                    var watermarker = new ImageWatermarker(stream)
                     {
-                        bc.Headers.ContentDisposition = new ContentDispositionHeaderValue("attachment")
-                        {
-                            FileName = "".CreateShortToken() + ext,
-                            Name = "uploaded_file[]"
-                        };
-                        using (var content = new MultipartFormDataContent
-                        {
-                            bc
-                        })
-                        {
-                            var code = httpClient.PostAsync("https://upload.cc/image_upload", content).ContinueWith(t =>
-                            {
-                                if (t.IsCanceled || t.IsFaulted)
-                                {
-                                    return 0;
-                                }
-
-                                var res = t.Result;
-                                if (res.IsSuccessStatusCode)
-                                {
-                                    string s = res.Content.ReadAsStringAsync().Result;
-                                    var token = JObject.Parse(s);
-                                    if ((int)token["code"] == 100)
-                                    {
-                                        url = "https://upload.cc/" + (string)token["success_image"][0]["url"];
-                                        return 1;
-                                    }
-                                }
-
-                                return 2;
-                            }).Result;
-                            if (code == 1)
-                            {
-                                success = true;
-                            }
-                        }
-                    }
+                        SkipWatermarkForSmallImages = true,
+                        SmallImagePixelsThreshold = 90000
+                    };
+                    return watermarker.AddWatermark(SystemSettings["Watermark"], Color.LightGray, WatermarkPosition.BottomRight, 30);
+                }
+                catch
+                {
+                    //
                 }
             }
-
-            if (success)
-            {
-                return (url, success);
-            }
-
-            return UploadImageFallback3(file);
+            return stream;
         }
 
         /// <summary>
-        /// 上传图片到新浪图床
+        /// 转换时区
         /// </summary>
-        /// <param name="file">文件名</param>
+        /// <param name="time">UTC时间</param>
+        /// <param name="zone">时区id</param>
         /// <returns></returns>
-        private static (string, bool) UploadImageFallback3(string file)
+        public static DateTime ToTimeZone(this in DateTime time, string zone)
         {
-            string url = string.Empty;
-            bool success = false;
-            string ext = Path.GetExtension(file);
-            using (HttpClient httpClient = new HttpClient())
-            {
-                httpClient.DefaultRequestHeaders.UserAgent.Add(ProductInfoHeaderValue.Parse("Mozilla/5.0"));
-                using (var stream = File.OpenRead(file))
-                {
-                    using (var bc = new StreamContent(stream))
-                    {
-                        bc.Headers.ContentDisposition = new ContentDispositionHeaderValue("attachment")
-                        {
-                            FileName = "".CreateShortToken() + ext,
-                            Name = "img"
-                        };
-                        using (var content = new MultipartFormDataContent
-                        {
-                            bc
-                        })
-                        {
-                            var code = httpClient.PostAsync("http://upload.otar.im/api/upload/imgur", content).ContinueWith(t =>
-                            {
-                                if (t.IsCanceled || t.IsFaulted)
-                                {
-                                    return 0;
-                                }
-
-                                var res = t.Result;
-                                if (res.IsSuccessStatusCode)
-                                {
-                                    string s = res.Content.ReadAsStringAsync().Result;
-                                    var token = JObject.Parse(s);
-                                    url = (string)token["url"];
-                                    return 1;
-                                }
-
-                                return 2;
-                            }).Result;
-                            if (code == 1)
-                            {
-                                success = true;
-                            }
-                        }
-                    }
-                }
-            }
-            return (url, success);
+            return TimeZoneInfo.ConvertTime(time, TZConvert.GetTimeZoneInfo(zone));
         }
 
         /// <summary>
-        /// 替换img标签的src属性
+        /// 转换时区
         /// </summary>
-        /// <param name="content"></param>
+        /// <param name="time">UTC时间</param>
+        /// <param name="zone">时区id</param>
+        /// <param name="format">时间格式字符串</param>
         /// <returns></returns>
-        public static string ReplaceImgSrc(string content)
+        public static string ToTimeZoneF(this in DateTime time, string zone, string format = "yyyy-MM-dd HH:mm:ss")
         {
-            var srcs = content.MatchImgSrcs();
-            foreach (string src in srcs)
-            {
-                if (!src.StartsWith("http"))
-                {
-                    var path = Path.Combine(AppContext.BaseDirectory + "wwwroot", src.Replace("/", @"\").Substring(1));
-                    if (File.Exists(path))
-                    {
-                        var (url, success) = UploadImage(path);
-                        if (success)
-                        {
-                            content = content.Replace(src, url);
-                            BackgroundJob.Enqueue(() => File.Delete(path));
-                        }
-                    }
-                }
-            }
-            return content;
-        }
-
-        /// <summary>
-        /// 是否是机器人访问
-        /// </summary>
-        /// <param name="req"></param>
-        /// <returns></returns>
-        public static bool IsRobot(this HttpRequest req)
-        {
-            return req.Headers[HeaderNames.UserAgent].ToString().Contains(new[] { "DNSPod", "Baidu", "spider", "Python", "bot" });
+            return ToTimeZone(time, zone).ToString(format);
         }
     }
 }

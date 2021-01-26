@@ -1,7 +1,6 @@
-﻿using EFSecondLevelCache.Core;
+﻿using Masuit.Tools.Models;
 using System;
 using System.Collections.Generic;
-using System.Data.SqlClient;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Threading.Tasks;
@@ -26,13 +25,13 @@ namespace Masuit.MyBlogs.Core.Infrastructure.Services.Interface
         /// 从二级缓存获取所有实体
         /// </summary>
         /// <returns>还未执行的SQL语句</returns>
-        EFCachedDbSet<T> GetAllFromL2Cache();
+        IEnumerable<T> GetAllFromCache();
 
         /// <summary>
         /// 从二级缓存获取所有实体
         /// </summary>
         /// <returns>还未执行的SQL语句</returns>
-        EFCachedQueryable<T> GetAllFromL2CacheNoTracking();
+        Task<IEnumerable<T>> GetAllFromCacheAsync();
 
         /// <summary>
         /// 获取所有实体
@@ -46,7 +45,14 @@ namespace Masuit.MyBlogs.Core.Infrastructure.Services.Interface
         /// </summary>
         /// <typeparam name="TDto">映射实体</typeparam>
         /// <returns>还未执行的SQL语句</returns>
-        IEnumerable<TDto> GetAllFromL2Cache<TDto>() where TDto : class;
+        IEnumerable<TDto> GetAllFromCache<TDto>() where TDto : class;
+
+        /// <summary>
+        /// 获取所有实体
+        /// </summary>
+        /// <typeparam name="TDto">映射实体</typeparam>
+        /// <returns>还未执行的SQL语句</returns>
+        Task<IEnumerable<TDto>> GetAllFromCacheAsync<TDto>() where TDto : class;
 
         /// <summary>
         /// 获取所有实体
@@ -73,7 +79,7 @@ namespace Masuit.MyBlogs.Core.Infrastructure.Services.Interface
         /// <param name="orderby">排序字段</param>
         /// <param name="isAsc">是否升序</param>
         /// <returns>还未执行的SQL语句</returns>
-        IEnumerable<T> GetAllFromL2Cache<TS>(Expression<Func<T, TS>> @orderby, bool isAsc = true);
+        IEnumerable<T> GetAllFromCache<TS>(Expression<Func<T, TS>> @orderby, bool isAsc = true);
 
         /// <summary>
         /// 获取所有实体
@@ -82,7 +88,7 @@ namespace Masuit.MyBlogs.Core.Infrastructure.Services.Interface
         /// <param name="orderby">排序字段</param>
         /// <param name="isAsc">是否升序</param>
         /// <returns>还未执行的SQL语句</returns>
-        IEnumerable<T> GetAllFromL2CacheNoTracking<TS>(Expression<Func<T, TS>> @orderby, bool isAsc = true);
+        Task<IEnumerable<T>> GetAllFromCacheAsync<TS>(Expression<Func<T, TS>> @orderby, bool isAsc = true);
 
         /// <summary>
         /// 获取所有实体
@@ -102,14 +108,24 @@ namespace Masuit.MyBlogs.Core.Infrastructure.Services.Interface
         /// <param name="orderby">排序字段</param>
         /// <param name="isAsc">是否升序</param>
         /// <returns>还未执行的SQL语句</returns>
-        IEnumerable<TDto> GetAllFromL2Cache<TS, TDto>(Expression<Func<T, TS>> @orderby, bool isAsc = true) where TDto : class;
+        IEnumerable<TDto> GetAllFromCache<TS, TDto>(Expression<Func<T, TS>> @orderby, bool isAsc = true) where TDto : class;
+
+        /// <summary>
+        /// 获取所有实体
+        /// </summary>
+        /// <typeparam name="TS">排序</typeparam>
+        /// <typeparam name="TDto">映射实体</typeparam>
+        /// <param name="orderby">排序字段</param>
+        /// <param name="isAsc">是否升序</param>
+        /// <returns>还未执行的SQL语句</returns>
+        Task<IEnumerable<TDto>> GetAllFromCacheAsync<TS, TDto>(Expression<Func<T, TS>> @orderby, bool isAsc = true) where TDto : class;
 
         /// <summary>
         /// 基本查询方法，获取一个集合
         /// </summary>
         /// <param name="where">查询条件</param>
         /// <returns>还未执行的SQL语句</returns>
-        IQueryable<T> LoadEntities(Expression<Func<T, bool>> @where);
+        IQueryable<T> GetQuery(Expression<Func<T, bool>> @where);
         /// <summary>
         /// 基本查询方法，获取一个集合
         /// </summary>
@@ -118,14 +134,14 @@ namespace Masuit.MyBlogs.Core.Infrastructure.Services.Interface
         /// <param name="orderby">排序字段</param>
         /// <param name="isAsc">是否升序</param>
         /// <returns>还未执行的SQL语句</returns>
-        IOrderedQueryable<T> LoadEntities<TS>(Expression<Func<T, bool>> @where, Expression<Func<T, TS>> @orderby, bool isAsc = true);
+        IOrderedQueryable<T> GetQuery<TS>(Expression<Func<T, bool>> @where, Expression<Func<T, TS>> @orderby, bool isAsc = true);
 
         /// <summary>
         /// 基本查询方法，获取一个被AutoMapper映射后的集合
         /// </summary>
         /// <param name="where">查询条件</param>
         /// <returns>还未执行的SQL语句</returns>
-        IQueryable<TDto> LoadEntities<TDto>(Expression<Func<T, bool>> @where) where TDto : class;
+        IQueryable<TDto> GetQuery<TDto>(Expression<Func<T, bool>> @where) where TDto : class;
 
         /// <summary>
         /// 基本查询方法，获取一个被AutoMapper映射后的集合
@@ -137,14 +153,21 @@ namespace Masuit.MyBlogs.Core.Infrastructure.Services.Interface
         /// <param name="isAsc">是否升序</param>
         /// <returns>还未执行的SQL语句</returns>
         /// <returns></returns>
-        IQueryable<TDto> LoadEntities<TS, TDto>(Expression<Func<T, bool>> @where, Expression<Func<T, TS>> @orderby, bool isAsc = true) where TDto : class;
+        IQueryable<TDto> GetQuery<TS, TDto>(Expression<Func<T, bool>> @where, Expression<Func<T, TS>> @orderby, bool isAsc = true) where TDto : class;
 
         /// <summary>
         /// 基本查询方法，获取一个集合，优先从二级缓存读取
         /// </summary>
         /// <param name="where">查询条件</param>
         /// <returns>还未执行的SQL语句</returns>
-        IEnumerable<T> LoadEntitiesFromL2Cache(Expression<Func<T, bool>> @where);
+        IEnumerable<T> GetQueryFromCache(Expression<Func<T, bool>> @where);
+
+        /// <summary>
+        /// 基本查询方法，获取一个集合，优先从二级缓存读取
+        /// </summary>
+        /// <param name="where">查询条件</param>
+        /// <returns>还未执行的SQL语句</returns>
+        Task<IEnumerable<T>> GetQueryFromCacheAsync(Expression<Func<T, bool>> @where);
 
         /// <summary>
         /// 基本查询方法，获取一个集合，优先从二级缓存读取
@@ -154,14 +177,31 @@ namespace Masuit.MyBlogs.Core.Infrastructure.Services.Interface
         /// <param name="orderby">排序方式</param>
         /// <param name="isAsc">是否升序</param>
         /// <returns>还未执行的SQL语句</returns>
-        IEnumerable<T> LoadEntitiesFromL2Cache<TS>(Expression<Func<T, bool>> @where, Expression<Func<T, TS>> @orderby, bool isAsc = true);
+        IEnumerable<T> GetQueryFromCache<TS>(Expression<Func<T, bool>> @where, Expression<Func<T, TS>> @orderby, bool isAsc = true);
+
+        /// <summary>
+        /// 基本查询方法，获取一个集合，优先从二级缓存读取
+        /// </summary>
+        /// <typeparam name="TS">排序字段</typeparam>
+        /// <param name="where">查询条件</param>
+        /// <param name="orderby">排序方式</param>
+        /// <param name="isAsc">是否升序</param>
+        /// <returns>还未执行的SQL语句</returns>
+        Task<IEnumerable<T>> GetQueryFromCacheAsync<TS>(Expression<Func<T, bool>> @where, Expression<Func<T, TS>> @orderby, bool isAsc = true);
 
         /// <summary>
         /// 基本查询方法，获取一个被AutoMapper映射后的集合，优先从二级缓存读取
         /// </summary>
         /// <param name="where">查询条件</param>
         /// <returns>还未执行的SQL语句</returns>
-        IEnumerable<TDto> LoadEntitiesFromL2Cache<TDto>(Expression<Func<T, bool>> @where) where TDto : class;
+        IEnumerable<TDto> GetQueryFromCache<TDto>(Expression<Func<T, bool>> @where) where TDto : class;
+
+        /// <summary>
+        /// 基本查询方法，获取一个被AutoMapper映射后的集合，优先从二级缓存读取
+        /// </summary>
+        /// <param name="where">查询条件</param>
+        /// <returns>还未执行的SQL语句</returns>
+        Task<IEnumerable<TDto>> GetQueryFromCacheAsync<TDto>(Expression<Func<T, bool>> @where) where TDto : class;
 
         /// <summary>
         /// 基本查询方法，获取一个被AutoMapper映射后的集合，优先从二级缓存读取
@@ -172,14 +212,25 @@ namespace Masuit.MyBlogs.Core.Infrastructure.Services.Interface
         /// <param name="orderby">排序方式</param>
         /// <param name="isAsc">是否升序</param>
         /// <returns>还未执行的SQL语句</returns>
-        IEnumerable<TDto> LoadEntitiesFromL2Cache<TS, TDto>(Expression<Func<T, bool>> @where, Expression<Func<T, TS>> @orderby, bool isAsc = true) where TDto : class;
+        IEnumerable<TDto> GetQueryFromCache<TS, TDto>(Expression<Func<T, bool>> @where, Expression<Func<T, TS>> @orderby, bool isAsc = true) where TDto : class;
+
+        /// <summary>
+        /// 基本查询方法，获取一个被AutoMapper映射后的集合，优先从二级缓存读取
+        /// </summary>
+        /// <typeparam name="TS">排序字段</typeparam>
+        /// <typeparam name="TDto">输出类型</typeparam>
+        /// <param name="where">查询条件</param>
+        /// <param name="orderby">排序方式</param>
+        /// <param name="isAsc">是否升序</param>
+        /// <returns>还未执行的SQL语句</returns>
+        Task<IEnumerable<TDto>> GetQueryFromCacheAsync<TS, TDto>(Expression<Func<T, bool>> @where, Expression<Func<T, TS>> @orderby, bool isAsc = true) where TDto : class;
 
         /// <summary>
         /// 基本查询方法，获取一个集合（不跟踪实体）
         /// </summary>
         /// <param name="where">查询条件</param>
         /// <returns>还未执行的SQL语句</returns>
-        IQueryable<T> LoadEntitiesNoTracking(Expression<Func<T, bool>> @where);
+        IQueryable<T> GetQueryNoTracking(Expression<Func<T, bool>> @where);
 
         /// <summary>
         /// 基本查询方法，获取一个集合（不跟踪实体）
@@ -189,31 +240,28 @@ namespace Masuit.MyBlogs.Core.Infrastructure.Services.Interface
         /// <param name="orderby">排序方式</param>
         /// <param name="isAsc">是否升序</param>
         /// <returns>还未执行的SQL语句</returns>
-        IOrderedQueryable<T> LoadEntitiesNoTracking<TS>(Expression<Func<T, bool>> @where, Expression<Func<T, TS>> @orderby, bool isAsc = true);
-
-        /// <summary>
-        /// 基本查询方法，获取一个集合，优先从二级缓存读取(不跟踪实体)
-        /// </summary>
-        /// <param name="where">查询条件</param>
-        /// <returns>实体集合</returns>
-        IEnumerable<T> LoadEntitiesFromL2CacheNoTracking(Expression<Func<T, bool>> @where);
-
-        /// <summary>
-        /// 基本查询方法，获取一个集合，优先从二级缓存读取(不跟踪实体)
-        /// </summary>
-        /// <typeparam name="TS">排序字段</typeparam>
-        /// <param name="where">查询条件</param>
-        /// <param name="orderby">排序方式</param>
-        /// <param name="isAsc">是否升序</param>
-        /// <returns>还未执行的SQL语句</returns>
-        IEnumerable<T> LoadEntitiesFromL2CacheNoTracking<TS>(Expression<Func<T, bool>> @where, Expression<Func<T, TS>> @orderby, bool isAsc = true);
+        IOrderedQueryable<T> GetQueryNoTracking<TS>(Expression<Func<T, bool>> @where, Expression<Func<T, TS>> @orderby, bool isAsc = true);
 
         /// <summary>
         /// 获取第一条数据
         /// </summary>
         /// <param name="where">查询条件</param>
         /// <returns>实体</returns>
-        T GetFirstEntity(Expression<Func<T, bool>> @where);
+        T Get(Expression<Func<T, bool>> @where);
+
+        /// <summary>
+        /// 获取第一条数据
+        /// </summary>
+        /// <param name="where">查询条件</param>
+        /// <returns>实体</returns>
+        T GetFromCache(Expression<Func<T, bool>> @where);
+
+        /// <summary>
+        /// 获取第一条数据
+        /// </summary>
+        /// <param name="where">查询条件</param>
+        /// <returns>实体</returns>
+        Task<T> GetFromCacheAsync(Expression<Func<T, bool>> @where);
 
         /// <summary>
         /// 获取第一条数据
@@ -223,14 +271,48 @@ namespace Masuit.MyBlogs.Core.Infrastructure.Services.Interface
         /// <param name="orderby">排序字段</param>
         /// <param name="isAsc">是否升序</param>
         /// <returns>实体</returns>
-        T GetFirstEntity<TS>(Expression<Func<T, bool>> @where, Expression<Func<T, TS>> @orderby, bool isAsc = true);
+        T Get<TS>(Expression<Func<T, bool>> @where, Expression<Func<T, TS>> @orderby, bool isAsc = true);
+
+        /// <summary>
+        /// 获取第一条数据
+        /// </summary>
+        /// <typeparam name="TS">排序</typeparam>
+        /// <param name="where">查询条件</param>
+        /// <param name="orderby">排序字段</param>
+        /// <param name="isAsc">是否升序</param>
+        /// <returns>实体</returns>
+        T GetFromCache<TS>(Expression<Func<T, bool>> @where, Expression<Func<T, TS>> @orderby, bool isAsc = true);
+
+        /// <summary>
+        /// 获取第一条数据
+        /// </summary>
+        /// <typeparam name="TS">排序</typeparam>
+        /// <param name="where">查询条件</param>
+        /// <param name="orderby">排序字段</param>
+        /// <param name="isAsc">是否升序</param>
+        /// <returns>实体</returns>
+        Task<T> GetFromCacheAsync<TS>(Expression<Func<T, bool>> @where, Expression<Func<T, TS>> @orderby, bool isAsc = true);
 
         /// <summary>
         /// 获取第一条被AutoMapper映射后的数据
         /// </summary>
         /// <param name="where">查询条件</param>
         /// <returns>实体</returns>
-        TDto GetFirstEntity<TDto>(Expression<Func<T, bool>> @where) where TDto : class;
+        TDto Get<TDto>(Expression<Func<T, bool>> @where) where TDto : class;
+
+        /// <summary>
+        /// 获取第一条被AutoMapper映射后的数据
+        /// </summary>
+        /// <param name="where">查询条件</param>
+        /// <returns>实体</returns>
+        TDto GetFromCache<TDto>(Expression<Func<T, bool>> @where) where TDto : class;
+
+        /// <summary>
+        /// 获取第一条被AutoMapper映射后的数据
+        /// </summary>
+        /// <param name="where">查询条件</param>
+        /// <returns>实体</returns>
+        Task<TDto> GetFromCacheAsync<TDto>(Expression<Func<T, bool>> @where) where TDto : class;
 
         /// <summary>
         /// 获取第一条被AutoMapper映射后的数据
@@ -241,14 +323,47 @@ namespace Masuit.MyBlogs.Core.Infrastructure.Services.Interface
         /// <param name="orderby">排序字段</param>
         /// <param name="isAsc">是否升序</param>
         /// <returns>映射实体</returns>
-        TDto GetFirstEntity<TS, TDto>(Expression<Func<T, bool>> @where, Expression<Func<T, TS>> @orderby, bool isAsc = true) where TDto : class;
+        TDto Get<TS, TDto>(Expression<Func<T, bool>> @where, Expression<Func<T, TS>> @orderby, bool isAsc = true) where TDto : class;
+
+        /// <summary>
+        /// 获取第一条被AutoMapper映射后的数据
+        /// </summary>
+        /// <typeparam name="TS">排序</typeparam>
+        /// <typeparam name="TDto">映射实体</typeparam>
+        /// <param name="where">查询条件</param>
+        /// <param name="orderby">排序字段</param>
+        /// <param name="isAsc">是否升序</param>
+        /// <returns>映射实体</returns>
+        Task<TDto> GetAsync<TS, TDto>(Expression<Func<T, bool>> @where, Expression<Func<T, TS>> @orderby, bool isAsc = true) where TDto : class;
+
+        /// <summary>
+        /// 获取第一条被AutoMapper映射后的数据
+        /// </summary>
+        /// <typeparam name="TS">排序</typeparam>
+        /// <typeparam name="TDto">映射实体</typeparam>
+        /// <param name="where">查询条件</param>
+        /// <param name="orderby">排序字段</param>
+        /// <param name="isAsc">是否升序</param>
+        /// <returns>映射实体</returns>
+        TDto GetFromCache<TS, TDto>(Expression<Func<T, bool>> @where, Expression<Func<T, TS>> @orderby, bool isAsc = true) where TDto : class;
+
+        /// <summary>
+        /// 获取第一条被AutoMapper映射后的数据
+        /// </summary>
+        /// <typeparam name="TS">排序</typeparam>
+        /// <typeparam name="TDto">映射实体</typeparam>
+        /// <param name="where">查询条件</param>
+        /// <param name="orderby">排序字段</param>
+        /// <param name="isAsc">是否升序</param>
+        /// <returns>映射实体</returns>
+        Task<TDto> GetFromCacheAsync<TS, TDto>(Expression<Func<T, bool>> @where, Expression<Func<T, TS>> @orderby, bool isAsc = true) where TDto : class;
 
         /// <summary>
         /// 获取第一条数据
         /// </summary>
         /// <param name="where">查询条件</param>
         /// <returns>实体</returns>
-        Task<T> GetFirstEntityAsync(Expression<Func<T, bool>> @where);
+        Task<T> GetAsync(Expression<Func<T, bool>> @where);
 
         /// <summary>
         /// 获取第一条数据
@@ -258,14 +373,14 @@ namespace Masuit.MyBlogs.Core.Infrastructure.Services.Interface
         /// <param name="orderby">排序字段</param>
         /// <param name="isAsc">是否升序</param>
         /// <returns>实体</returns>
-        Task<T> GetFirstEntityAsync<TS>(Expression<Func<T, bool>> @where, Expression<Func<T, TS>> @orderby, bool isAsc = true);
+        Task<T> GetAsync<TS>(Expression<Func<T, bool>> @where, Expression<Func<T, TS>> @orderby, bool isAsc = true);
 
         /// <summary>
         /// 获取第一条数据（不跟踪实体）
         /// </summary>
         /// <param name="where">查询条件</param>
         /// <returns>实体</returns>
-        T GetFirstEntityNoTracking(Expression<Func<T, bool>> @where);
+        T GetNoTracking(Expression<Func<T, bool>> @where);
 
         /// <summary>
         /// 获取第一条数据（不跟踪实体）
@@ -275,14 +390,14 @@ namespace Masuit.MyBlogs.Core.Infrastructure.Services.Interface
         /// <param name="orderby">排序字段</param>
         /// <param name="isAsc">是否升序</param>
         /// <returns>实体</returns>
-        T GetFirstEntityNoTracking<TS>(Expression<Func<T, bool>> @where, Expression<Func<T, TS>> @orderby, bool isAsc = true);
+        T GetNoTracking<TS>(Expression<Func<T, bool>> @where, Expression<Func<T, TS>> @orderby, bool isAsc = true);
 
         /// <summary>
         /// 获取第一条数据（异步，不跟踪实体）
         /// </summary>
         /// <param name="where">查询条件</param>
         /// <returns>实体</returns>
-        Task<T> GetFirstEntityNoTrackingAsync(Expression<Func<T, bool>> @where);
+        Task<T> GetNoTrackingAsync(Expression<Func<T, bool>> @where);
 
         /// <summary>
         /// 获取第一条数据（异步，不跟踪实体）
@@ -292,7 +407,7 @@ namespace Masuit.MyBlogs.Core.Infrastructure.Services.Interface
         /// <param name="orderby">排序字段</param>
         /// <param name="isAsc">是否升序</param>
         /// <returns>实体</returns>
-        Task<T> GetFirstEntityNoTrackingAsync<TS>(Expression<Func<T, bool>> @where, Expression<Func<T, TS>> @orderby, bool isAsc = true);
+        Task<T> GetNoTrackingAsync<TS>(Expression<Func<T, bool>> @where, Expression<Func<T, TS>> @orderby, bool isAsc = true);
 
         /// <summary>
         /// 根据ID找实体
@@ -314,12 +429,11 @@ namespace Masuit.MyBlogs.Core.Infrastructure.Services.Interface
         /// <typeparam name="TS"></typeparam>
         /// <param name="pageIndex">第几页</param>
         /// <param name="pageSize">每页大小</param>
-        /// <param name="totalCount">数据总数</param>
         /// <param name="where">where Lambda条件表达式</param>
         /// <param name="orderby">orderby Lambda条件表达式</param>
         /// <param name="isAsc">升序降序</param>
         /// <returns>还未执行的SQL语句</returns>
-        IQueryable<T> LoadPageEntities<TS>(int pageIndex, int pageSize, out int totalCount, Expression<Func<T, bool>> where, Expression<Func<T, TS>> orderby, bool isAsc);
+        PagedList<T> GetPages<TS>(int pageIndex, int pageSize, Expression<Func<T, bool>> where, Expression<Func<T, TS>> orderby, bool isAsc);
 
         /// <summary>
         /// 高效分页查询方法，取出被AutoMapper映射后的数据集合
@@ -328,12 +442,11 @@ namespace Masuit.MyBlogs.Core.Infrastructure.Services.Interface
         /// <typeparam name="TDto"></typeparam>
         /// <param name="pageIndex">第几页</param>
         /// <param name="pageSize">每页大小</param>
-        /// <param name="totalCount">数据总数</param>
         /// <param name="where">where Lambda条件表达式</param>
         /// <param name="orderby">orderby Lambda条件表达式</param>
         /// <param name="isAsc">升序降序</param>
         /// <returns>还未执行的SQL语句</returns>
-        IQueryable<TDto> LoadPageEntities<TS, TDto>(int pageIndex, int pageSize, out int totalCount, Expression<Func<T, bool>> where, Expression<Func<T, TS>> orderby, bool isAsc) where TDto : class;
+        PagedList<TDto> GetPages<TS, TDto>(int pageIndex, int pageSize, Expression<Func<T, bool>> where, Expression<Func<T, TS>> orderby, bool isAsc) where TDto : class;
 
         /// <summary>
         /// 高效分页查询方法，优先从二级缓存读取
@@ -341,12 +454,23 @@ namespace Masuit.MyBlogs.Core.Infrastructure.Services.Interface
         /// <typeparam name="TS"></typeparam>
         /// <param name="pageIndex">第几页</param>
         /// <param name="pageSize">每页大小</param>
-        /// <param name="totalCount">数据总数</param>
         /// <param name="where">where Lambda条件表达式</param>
         /// <param name="orderby">orderby Lambda条件表达式</param>
         /// <param name="isAsc">升序降序</param>
         /// <returns>还未执行的SQL语句</returns>
-        IEnumerable<T> LoadPageEntitiesFromL2Cache<TS>(int pageIndex, int pageSize, out int totalCount, Expression<Func<T, bool>> @where, Expression<Func<T, TS>> @orderby, bool isAsc);
+        PagedList<T> GetPagesFromCache<TS>(int pageIndex, int pageSize, Expression<Func<T, bool>> @where, Expression<Func<T, TS>> @orderby, bool isAsc);
+
+        /// <summary>
+        /// 高效分页查询方法，优先从二级缓存读取
+        /// </summary>
+        /// <typeparam name="TS"></typeparam>
+        /// <param name="pageIndex">第几页</param>
+        /// <param name="pageSize">每页大小</param>
+        /// <param name="where">where Lambda条件表达式</param>
+        /// <param name="orderby">orderby Lambda条件表达式</param>
+        /// <param name="isAsc">升序降序</param>
+        /// <returns>还未执行的SQL语句</returns>
+        Task<PagedList<T>> GetPagesFromCacheAsync<TS>(int pageIndex, int pageSize, Expression<Func<T, bool>> @where, Expression<Func<T, TS>> @orderby, bool isAsc);
 
         /// <summary>
         /// 高效分页查询方法，优先从二级缓存读取，取出被AutoMapper映射后的数据集合
@@ -355,12 +479,24 @@ namespace Masuit.MyBlogs.Core.Infrastructure.Services.Interface
         /// <typeparam name="TDto"></typeparam>
         /// <param name="pageIndex">第几页</param>
         /// <param name="pageSize">每页大小</param>
-        /// <param name="totalCount">数据总数</param>
         /// <param name="where">where Lambda条件表达式</param>
         /// <param name="orderby">orderby Lambda条件表达式</param>
         /// <param name="isAsc">升序降序</param>
         /// <returns>还未执行的SQL语句</returns>
-        IEnumerable<TDto> LoadPageEntitiesFromL2Cache<TS, TDto>(int pageIndex, int pageSize, out int totalCount, Expression<Func<T, bool>> @where, Expression<Func<T, TS>> @orderby, bool isAsc) where TDto : class;
+        PagedList<TDto> GetPagesFromCache<TS, TDto>(int pageIndex, int pageSize, Expression<Func<T, bool>> @where, Expression<Func<T, TS>> @orderby, bool isAsc) where TDto : class;
+
+        /// <summary>
+        /// 高效分页查询方法，优先从二级缓存读取，取出被AutoMapper映射后的数据集合
+        /// </summary>
+        /// <typeparam name="TS"></typeparam>
+        /// <typeparam name="TDto"></typeparam>
+        /// <param name="pageIndex">第几页</param>
+        /// <param name="pageSize">每页大小</param>
+        /// <param name="where">where Lambda条件表达式</param>
+        /// <param name="orderby">orderby Lambda条件表达式</param>
+        /// <param name="isAsc">升序降序</param>
+        /// <returns>还未执行的SQL语句</returns>
+        Task<PagedList<TDto>> GetPagesFromCacheAsync<TS, TDto>(int pageIndex, int pageSize, Expression<Func<T, bool>> @where, Expression<Func<T, TS>> @orderby, bool isAsc) where TDto : class;
 
         /// <summary>
         /// 高效分页查询方法（不跟踪实体）
@@ -368,25 +504,11 @@ namespace Masuit.MyBlogs.Core.Infrastructure.Services.Interface
         /// <typeparam name="TS"></typeparam>
         /// <param name="pageIndex">第几页</param>
         /// <param name="pageSize">每页大小</param>
-        /// <param name="totalCount">数据总数</param>
         /// <param name="where">where Lambda条件表达式</param>
         /// <param name="orderby">orderby Lambda条件表达式</param>
         /// <param name="isAsc">升序降序</param>
         /// <returns>还未执行的SQL语句</returns>
-        IQueryable<T> LoadPageEntitiesNoTracking<TS>(int pageIndex, int pageSize, out int totalCount, Expression<Func<T, bool>> @where, Expression<Func<T, TS>> @orderby, bool isAsc = true);
-
-        /// <summary>
-        /// 高效分页查询方法，优先从缓存读取（不跟踪实体）
-        /// </summary>
-        /// <typeparam name="TS"></typeparam>
-        /// <param name="pageIndex">第几页</param>
-        /// <param name="pageSize">每页大小</param>
-        /// <param name="totalCount">数据总数</param>
-        /// <param name="where">where Lambda条件表达式</param>
-        /// <param name="orderby">orderby Lambda条件表达式</param>
-        /// <param name="isAsc">升序降序</param>
-        /// <returns>还未执行的SQL语句</returns>
-        IEnumerable<T> LoadPageEntitiesFromL2CacheNoTracking<TS>(int pageIndex, int pageSize, out int totalCount, Expression<Func<T, bool>> @where, Expression<Func<T, TS>> @orderby, bool isAsc = true);
+        PagedList<T> GetPagesNoTracking<TS>(int pageIndex, int pageSize, Expression<Func<T, bool>> @where, Expression<Func<T, TS>> @orderby, bool isAsc = true);
 
         /// <summary>
         /// 根据ID删除实体
@@ -459,43 +581,6 @@ namespace Masuit.MyBlogs.Core.Infrastructure.Services.Interface
         Task<int> DeleteEntitySavedAsync(T t);
 
         /// <summary>
-        /// 更新实体
-        /// </summary>
-        /// <param name="t">更新后的实体</param>
-        /// <returns>更新成功</returns>
-        bool UpdateEntity(T t);
-
-        /// <summary>
-        /// 更新实体并保存
-        /// </summary>
-        /// <param name="t">更新后的实体</param>
-        /// <returns>更新成功</returns>
-        bool UpdateEntitySaved(T t);
-
-        /// <summary>
-        /// 更新实体并保存（异步）
-        /// </summary>
-        /// <param name="t">更新后的实体</param>
-        /// <returns>更新成功</returns>
-        Task<int> UpdateEntitySavedAsync(T t);
-
-        /// <summary>
-        /// 根据条件更新实体
-        /// </summary>
-        /// <param name="where">查询条件</param>
-        /// <param name="t">更新后的实体</param>
-        /// <returns>更新成功</returns>
-        int UpdateEntity(Expression<Func<T, bool>> @where, T t);
-
-        /// <summary>
-        /// 根据条件更新实体（异步）
-        /// </summary>
-        /// <param name="where">查询条件</param>
-        /// <param name="t">更新后的实体</param>
-        /// <returns>更新成功</returns>
-        Task<int> UpdateEntityAsync(Expression<Func<T, bool>> @where, T t);
-
-        /// <summary>
         /// 添加实体
         /// </summary>
         /// <param name="t">需要添加的实体</param>
@@ -503,11 +588,67 @@ namespace Masuit.MyBlogs.Core.Infrastructure.Services.Interface
         T AddEntity(T t);
 
         /// <summary>
+        /// 添加或更新实体
+        /// </summary>
+        /// <param name="key">更新键规则</param>
+        /// <param name="t">需要保存的实体</param>
+        /// <returns>保存成功</returns>
+        T AddOrUpdate<TKey>(Expression<Func<T, TKey>> key, T t);
+
+        /// <summary>
+        /// 添加或更新实体
+        /// </summary>
+        /// <param name="key">更新键规则</param>
+        /// <param name="entities">需要保存的实体</param>
+        /// <returns>保存成功</returns>
+        void AddOrUpdate<TKey>(Expression<Func<T, TKey>> key, params T[] entities);
+
+        /// <summary>
+        /// 添加或更新实体
+        /// </summary>
+        /// <param name="key">更新键规则</param>
+        /// <param name="entities">需要保存的实体</param>
+        /// <returns>保存成功</returns>
+        void AddOrUpdate<TKey>(Expression<Func<T, TKey>> key, IEnumerable<T> entities);
+
+        /// <summary>
         /// 添加实体并保存
         /// </summary>
         /// <param name="t">需要添加的实体</param>
         /// <returns>添加成功</returns>
         T AddEntitySaved(T t);
+
+        /// <summary>
+        /// 添加或更新实体
+        /// </summary>
+        /// <param name="key">更新键规则</param>
+        /// <param name="t">需要保存的实体</param>
+        /// <returns>保存成功</returns>
+        T AddOrUpdateSaved<TKey>(Expression<Func<T, TKey>> key, T t);
+
+        /// <summary>
+        /// 添加或更新实体
+        /// </summary>
+        /// <param name="key">更新键规则</param>
+        /// <param name="entities">需要保存的实体</param>
+        /// <returns>保存成功</returns>
+        bool AddOrUpdateSaved<TKey>(Expression<Func<T, TKey>> key, params T[] entities);
+
+        /// <summary>
+        /// 添加或更新实体
+        /// </summary>
+        /// <param name="key">更新键规则</param>
+        /// <param name="t">需要保存的实体</param>
+        /// <returns>保存成功</returns>
+        Task<int> AddOrUpdateSavedAsync<TKey>(Expression<Func<T, TKey>> key, T t);
+
+        /// <summary>
+        /// 添加或更新实体
+        /// </summary>
+        /// <param name="key">更新键规则</param>
+        /// <param name="entities">需要保存的实体</param>
+        /// <returns>保存成功</returns>
+        Task<int> AddOrUpdateSavedAsync<TKey>(Expression<Func<T, TKey>> key, IEnumerable<T> entities);
 
         /// <summary>
         /// 添加实体并保存（异步）
@@ -564,27 +705,6 @@ namespace Masuit.MyBlogs.Core.Infrastructure.Services.Interface
         Task<int> DeleteEntitiesSavedAsync(IEnumerable<T> list);
 
         /// <summary>
-        /// 更新多个实体
-        /// </summary>
-        /// <param name="list">实体集合</param>
-        /// <returns>更新成功</returns>
-        bool UpdateEntities(IEnumerable<T> list);
-
-        /// <summary>
-        /// 更新多个实体并保存
-        /// </summary>
-        /// <param name="list">实体集合</param>
-        /// <returns>更新成功</returns>
-        bool UpdateEntitiesSaved(IEnumerable<T> list);
-
-        /// <summary>
-        /// 更新多个实体并保存（异步）
-        /// </summary>
-        /// <param name="list">实体集合</param>
-        /// <returns>更新成功</returns>
-        Task<int> UpdateEntitiesSavedAsync(IEnumerable<T> list);
-
-        /// <summary>
         /// 添加多个实体并保存
         /// </summary>
         /// <param name="list">实体集合</param>
@@ -598,38 +718,10 @@ namespace Masuit.MyBlogs.Core.Infrastructure.Services.Interface
         /// <returns>添加成功</returns>
         Task<IEnumerable<T>> AddEntitiesAsync(IList<T> list);
 
-        /// <summary>
-        /// 执行查询语句
-        /// </summary>
-        /// <typeparam name="T"></typeparam>
-        /// <param name="sql"></param>
-        /// <param name="parameters">参数</param>
-        IQueryable<T> SqlQuery(string sql, params SqlParameter[] parameters);
-
-        /// <summary>
-        /// 执行查询语句
-        /// </summary>
-        /// <typeparam name="TS"></typeparam>
-        /// <param name="sql"></param>
-        /// <param name="parameters"></param>
-        /// <returns></returns>
-        IEnumerable<TS> SqlQuery<TS>(string sql, object parameters = null);
-        /// <summary>
-        /// 执行DML语句
-        /// </summary>
-        /// <param name="sql"></param>
-        /// <param name="parameters"></param>
-        void ExecuteSql(string sql, params SqlParameter[] parameters);
-
-        /// <summary>
-        /// 批量添加实体
-        /// </summary>
-        /// <param name="list">需要添加的实体</param>
-        void BulkInsert(IEnumerable<T> list);
-
-        /// <summary>
-        /// 统一批量保存数据
-        /// </summary>
-        void BulkSaveChanges();
+        T this[object id] => GetById(id);
+        List<T> this[Expression<Func<T, bool>> where] => GetQuery(where).ToList();
+        public static T operator +(IBaseService<T> left, T right) => left.AddEntitySaved(right);
+        public static bool operator -(IBaseService<T> left, T right) => left.DeleteEntitySaved(right);
+        public static bool operator -(IBaseService<T> left, object id) => left.DeleteByIdSaved(id);
     }
 }

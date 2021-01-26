@@ -1,22 +1,10 @@
-﻿using Masuit.LuceneEFCore.SearchEngine;
-using Masuit.LuceneEFCore.SearchEngine.Interfaces;
-using Masuit.MyBlogs.Core.Infrastructure.Application;
+﻿using Masuit.LuceneEFCore.SearchEngine.Interfaces;
 using Masuit.MyBlogs.Core.Infrastructure.Repository.Interface;
 using Masuit.MyBlogs.Core.Infrastructure.Services.Interface;
-using Masuit.MyBlogs.Core.Models.DTO;
 using Masuit.MyBlogs.Core.Models.Entity;
-using Masuit.MyBlogs.Core.Models.Enum;
-using System.Linq;
 
 namespace Masuit.MyBlogs.Core.Infrastructure.Services
 {
-    public partial class BroadcastService : BaseService<Broadcast>, IBroadcastService
-    {
-        public BroadcastService(IBaseRepository<Broadcast> repository, ISearchEngine<DataContext> searchEngine, ILuceneIndexSearcher searcher) : base(repository, searchEngine, searcher)
-        {
-        }
-    }
-
     public partial class DonateService : BaseService<Donate>, IDonateService
     {
         public DonateService(IBaseRepository<Donate> repository, ISearchEngine<DataContext> searchEngine, ILuceneIndexSearcher searcher) : base(repository, searchEngine, searcher)
@@ -35,24 +23,6 @@ namespace Masuit.MyBlogs.Core.Infrastructure.Services
     {
         public InternalMessageService(IBaseRepository<InternalMessage> repository, ISearchEngine<DataContext> searchEngine, ILuceneIndexSearcher searcher) : base(repository, searchEngine, searcher)
         {
-        }
-    }
-
-    public partial class IssueService : BaseService<Issue>, IIssueService
-    {
-        public IssueService(IBaseRepository<Issue> repository, ISearchEngine<DataContext> searchEngine, ILuceneIndexSearcher searcher) : base(repository, searchEngine, searcher)
-        {
-        }
-        public SearchResult<Issue> SearchPage(int page, int size, string keyword)
-        {
-            var searchResult = _searchEngine.ScoredSearch<Issue>(new SearchOptions(keyword, page, size, typeof(Issue)));
-            var posts = searchResult.Results.Select(p => p.Entity).Where(i => i.Status == Status.Handled).ToList();
-            return new SearchResult<Issue>()
-            {
-                Results = posts,
-                Elapsed = searchResult.Elapsed,
-                Total = searchResult.TotalHits
-            };
         }
     }
 
@@ -84,23 +54,9 @@ namespace Masuit.MyBlogs.Core.Infrastructure.Services
         }
     }
 
-    public partial class PostAccessRecordService : BaseService<PostAccessRecord>, IPostAccessRecordService
-    {
-        public PostAccessRecordService(IBaseRepository<PostAccessRecord> repository, ISearchEngine<DataContext> searchEngine, ILuceneIndexSearcher searcher) : base(repository, searchEngine, searcher)
-        {
-        }
-    }
-
     public partial class PostHistoryVersionService : BaseService<PostHistoryVersion>, IPostHistoryVersionService
     {
         public PostHistoryVersionService(IBaseRepository<PostHistoryVersion> repository, ISearchEngine<DataContext> searchEngine, ILuceneIndexSearcher searcher) : base(repository, searchEngine, searcher)
-        {
-        }
-    }
-
-    public partial class SearchDetailsService : BaseService<SearchDetails>, ISearchDetailsService
-    {
-        public SearchDetailsService(IBaseRepository<SearchDetails> repository, ISearchEngine<DataContext> searchEngine, ILuceneIndexSearcher searcher) : base(repository, searchEngine, searcher)
         {
         }
     }
@@ -129,6 +85,18 @@ namespace Masuit.MyBlogs.Core.Infrastructure.Services
     public partial class SeminarPostHistoryVersionService : BaseService<SeminarPostHistoryVersion>, ISeminarPostHistoryVersionService
     {
         public SeminarPostHistoryVersionService(IBaseRepository<SeminarPostHistoryVersion> repository, ISearchEngine<DataContext> searchEngine, ILuceneIndexSearcher searcher) : base(repository, searchEngine, searcher)
+        {
+        }
+    }
+    public partial class PostMergeRequestService : BaseService<PostMergeRequest>, IPostMergeRequestService
+    {
+        public PostMergeRequestService(IBaseRepository<PostMergeRequest> repository, ISearchEngine<DataContext> searchEngine, ILuceneIndexSearcher searcher) : base(repository, searchEngine, searcher)
+        {
+        }
+    }
+    public partial class VariablesService : BaseService<Variables>, IVariablesService
+    {
+        public VariablesService(IBaseRepository<Variables> repository, ISearchEngine<DataContext> searchEngine, ILuceneIndexSearcher searcher) : base(repository, searchEngine, searcher)
         {
         }
     }

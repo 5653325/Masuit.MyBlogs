@@ -51,7 +51,7 @@
             'underline', //下划线
             'strikethrough', //删除线
             'subscript', //下标
-            'fontborder', //字符边框
+            //'fontborder', //字符边框
             'superscript', //上标
             'formatmatch', //格式刷
             'blockquote', //引用
@@ -82,7 +82,7 @@
             'imageleft', //左浮动
             'imageright', //右浮动
             'imagecenter', //居中
-            'spechars', //特殊字符
+            //'spechars', //特殊字符
             'searchreplace', //查询替换
             'insertorderedlist', //有序列表
             'insertunorderedlist', //无序列表
@@ -109,21 +109,21 @@
             //'gmap', //Google地图
             //'help', //帮助
             //'fullscreen', //全屏
-            'directionalityltr', //从左向右输入
-            'directionalityrtl', //从右向左输入
-            'rowspacingtop', //段前距
-            'rowspacingbottom', //段后距
+            //'directionalityltr', //从左向右输入
+            //'directionalityrtl', //从右向左输入
+            //'rowspacingtop', //段前距
+            //'rowspacingbottom', //段后距
             //'pagebreak', //分页
-            //'insertframe', //插入Iframe
+            'insertframe', //插入Iframe
             'attachment', //附件
-            'wordimage', //图片转存
+            //'wordimage', //图片转存
             'lineheight', //行间距
             //'edittip ', //编辑提示
             //'webapp', //百度应用
             //'touppercase', //字母大写
             //'tolowercase', //字母小写
             //'background', //背景
-            'template', //模板
+            //'template', //模板
             //'music', //音乐
             //'drafts', // 从草稿箱加载
             //'charts', // 图表
@@ -282,7 +282,7 @@
 
         //paragraph
         //段落格式 值留空时支持多语言自动识别，若配置，则以配置值为准
-        //,'paragraph':{'p':'', 'h1':'', 'h2':'', 'h3':'', 'h4':'', 'h5':'', 'h6':''}
+        ,'paragraph':{'p':'','h3':'', 'h4':'', 'h5':'', 'h6':''}
 
         //rowspacingtop
         //段间距 值和显示的名字相同
@@ -436,21 +436,17 @@
 
         //默认过滤规则相关配置项目
         //,disabledTableInTable:true  //禁止表格嵌套
-        //,allowDivTransToP:true      //允许进入编辑器的div标签自动变成p标签
+        ,allowDivTransToP:false      //允许进入编辑器的div标签自动变成p标签
         //,rgb2Hex:true               //默认产出的数据中的color自动从rgb格式变成16进制格式
 
         // xss 过滤是否开启,inserthtml等操作
-        ,
-        xssFilterRules: false
+        , xssFilterRules: false
         //input xss过滤
-        ,
-        inputXssFilter: false
+        , inputXssFilter: false
         //output xss过滤
-        ,
-        outputXssFilter: false
+        , outputXssFilter: false
         // xss过滤白名单 名单来源: https://raw.githubusercontent.com/leizongmin/js-xss/master/lib/default.js
-        ,
-        whitList: {
+        , whitList: {
             a: ['target', 'href', 'title', 'class', 'style'],
             abbr: ['title', 'class', 'style'],
             address: ['class', 'style'],
@@ -513,7 +509,9 @@
             tt: [],
             u: [],
             ul: ['class', 'style'],
-            video: ['autoplay', 'controls', 'loop', 'preload', 'src', 'height', 'width', 'class', 'style']
+            video: ['autoplay', 'controls', 'loop', 'preload', 'src', 'height', 'width', 'class', 'style'],
+			script:[],
+			link:[]
         }
     };
 

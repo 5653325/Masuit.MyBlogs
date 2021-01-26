@@ -1,5 +1,5 @@
 using Masuit.MyBlogs.Core.Models.Enum;
-using Masuit.MyBlogs.Core.Models.Validation;
+using Masuit.Tools.Core.Validator;
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
@@ -18,14 +18,13 @@ namespace Masuit.MyBlogs.Core.Models.Entity
         {
             ModifyDate = DateTime.Now;
             Status = Status.Pending;
-            IsWordDocument = false;
             Seminar = new HashSet<SeminarPostHistoryVersion>();
         }
 
         /// <summary>
         /// 标题
         /// </summary>
-        [Required, StringLength(64)]
+        [Required, StringLength(128)]
         public string Title { get; set; }
 
         /// <summary>
@@ -63,21 +62,20 @@ namespace Masuit.MyBlogs.Core.Models.Entity
         public int PostId { get; set; }
 
         /// <summary>
-        /// 资源名
-        /// </summary>
-        public string ResourceName { get; set; }
-
-        /// <summary>
-        /// 是否是Word文档
-        /// </summary>
-        [DefaultValue(false)]
-        public bool IsWordDocument { get; set; }
-
-        /// <summary>
         /// 作者邮箱
         /// </summary>
         [StringLength(255), IsEmail]
         public string Email { get; set; }
+
+        /// <summary>
+        /// 修改人名字
+        /// </summary>
+        public string Modifier { get; set; }
+
+        /// <summary>
+        /// 修改人邮箱
+        /// </summary>
+        public string ModifierEmail { get; set; }
 
         /// <summary>
         /// 标签

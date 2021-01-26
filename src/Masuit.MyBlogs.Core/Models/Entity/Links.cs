@@ -1,7 +1,7 @@
 using Masuit.MyBlogs.Core.Models.Enum;
+using System;
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
-using Masuit.MyBlogs.Core.Models.Entity;
 
 namespace Masuit.MyBlogs.Core.Models.Entity
 {
@@ -15,6 +15,7 @@ namespace Masuit.MyBlogs.Core.Models.Entity
         {
             Status = Status.Available;
             Except = false;
+            UpdateTime = DateTime.Now;
         }
 
         /// <summary>
@@ -38,5 +39,15 @@ namespace Masuit.MyBlogs.Core.Models.Entity
         /// 是否是推荐站点
         /// </summary>
         public bool Recommend { get; set; }
+
+        /// <summary>
+        /// 友链权重
+        /// </summary>
+        public int Weight { get; set; }
+
+        /// <summary>
+        /// 更新时间
+        /// </summary>
+        public DateTime UpdateTime { get; set; }
     }
 }

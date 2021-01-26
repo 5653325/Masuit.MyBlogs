@@ -1,7 +1,5 @@
 ﻿myApp.controller("msg", ["$scope", "$http", "NgTableParams", "$timeout", function ($scope, $http, NgTableParams, $timeout) {
-	window.hub.stop();
-	var self = this;
-	$scope.loading();
+    var self = this;
 	$scope.currentPage = 1;
 	$scope.paginationConf = {
 		currentPage: $scope.currentPage ||1,
@@ -14,7 +12,6 @@
 		}
 	};
 	this.GetPageData = function(page, size) {
-		$scope.loading();
 		$http.post("/msg/GetPendingMsgs", {
 			page,
 			size
@@ -27,7 +24,6 @@
 				filterDelay: 0,
 				dataset: res.data.Data
 			});
-			$scope.loadingDone();
 		});
 	};
 	self.del = function(row) {
@@ -74,13 +70,9 @@
 			self.GetPageData($scope.paginationConf.currentPage, $scope.paginationConf.itemsPerPage);
 		});
 	}
-	$scope.loadingDone();
-
 }]);
-myApp.controller("msgs", ["$scope", "$http", "$timeout", function ($scope, $http, $timeout) {
-	window.hub.stop();
+myApp.controller("msgs", ["$scope", "$http", function ($scope, $http) {
 	var self = this;
-	$scope.loading();
 	$scope.currentPage = 1;
 	$scope.paginationConf = {
 		currentPage: $scope.currentPage || 1,
@@ -93,14 +85,12 @@ myApp.controller("msgs", ["$scope", "$http", "$timeout", function ($scope, $http
 		}
 	};
 	this.GetPageData = function (page, size) {
-		$scope.loading();
 		$http.post("/msg/GetInternalMsgs", {
 			page,
 			size
 		}).then(function (res) {
 			$scope.paginationConf.totalItems = res.data.TotalCount;
 			$scope.Messages = res.data.Data;
-			$scope.loadingDone();
 		});
 	};
 	$scope.MarkRead= function() {

@@ -1,7 +1,7 @@
-﻿using Masuit.Tools.Html;
-using System;
+﻿using Masuit.MyBlogs.Core.Common;
+using Masuit.Tools.Html;
+using Masuit.Tools.Logging;
 using System.ComponentModel.DataAnnotations;
-using System.IO;
 using System.Text.RegularExpressions;
 
 namespace Masuit.MyBlogs.Core.Models.Validation
@@ -11,10 +11,10 @@ namespace Masuit.MyBlogs.Core.Models.Validation
     /// </summary>
     public class SubmitCheckAttribute : ValidationAttribute
     {
-        private bool checkLength;
-        private bool checkContent;
-        private int MaxLength { get; set; } = 500;
-        private int MinLength { get; set; } = 2;
+        private readonly bool _checkLength;
+        private readonly bool _checkContent;
+        private int MaxLength { get; } = 500;
+        private int MinLength { get; } = 2;
 
         /// <summary>
         /// 检查提交的内容
@@ -23,8 +23,8 @@ namespace Masuit.MyBlogs.Core.Models.Validation
         /// <param name="checkContent">是否检查内容包含禁用词</param>
         public SubmitCheckAttribute(bool checkLength = true, bool checkContent = true)
         {
-            this.checkContent = checkContent;
-            this.checkLength = checkLength;
+            this._checkContent = checkContent;
+            this._checkLength = checkLength;
         }
 
         /// <summary>
@@ -55,8 +55,8 @@ namespace Masuit.MyBlogs.Core.Models.Validation
                 ErrorMessage = $"请输入有效的内容！提交的内容不能为空！";
                 return false;
             }
-            string content = (value as string).RemoveHtml().Trim();
-            if (checkLength)
+            string content = (value as string).RemoveHtmlTag().Trim();
+            if (_checkLength)
             {
                 if (string.IsNullOrEmpty(content) || content.Length < 2)
                 {
@@ -76,8 +76,10 @@ namespace Masuit.MyBlogs.Core.Models.Validation
                 }
             }
 
-            if (checkContent && Regex.Match(content, File.ReadAllText(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "App_Data", "ban.txt"))).Length > 0)
+            var match = Regex.Match(content, CommonHelper.BanRegex);
+            if (_checkContent && match.Success)
             {
+                LogManager.Info($"提交内容：{content}，敏感词：{match.Value}");
                 ErrorMessage = "您提交的内容包含有非法的词汇，被禁止发表，请检查您要提交的内容！";
                 return false;
             }

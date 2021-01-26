@@ -1,17 +1,15 @@
-﻿using Common;
-using Masuit.LuceneEFCore.SearchEngine.Interfaces;
-using Masuit.MyBlogs.Core.Infrastructure.Application;
+﻿using Masuit.LuceneEFCore.SearchEngine.Interfaces;
+using Masuit.MyBlogs.Core.Common;
 using Masuit.MyBlogs.Core.Infrastructure.Repository.Interface;
-using Masuit.MyBlogs.Core.Infrastructure.Services;
 using Masuit.MyBlogs.Core.Infrastructure.Services.Interface;
 using Masuit.MyBlogs.Core.Models.DTO;
 using Masuit.MyBlogs.Core.Models.Entity;
+using Masuit.Tools;
 using Masuit.Tools.DateTimeExt;
 using Masuit.Tools.Security;
-using Masuit.Tools.Win32;
 using System;
 
-namespace Service
+namespace Masuit.MyBlogs.Core.Infrastructure.Services
 {
     public partial class UserInfoService : BaseService<UserInfo>, IUserInfoService
     {
@@ -22,7 +20,7 @@ namespace Service
         /// <returns></returns>
         public UserInfo GetByUsername(string name)
         {
-            return GetFirstEntity(u => u.Username.Equals(name));
+            return Get(u => u.Username.Equals(name) || u.Email.Equals(name));
         }
 
         /// <summary>
@@ -31,12 +29,12 @@ namespace Service
         /// <param name="username"></param>
         /// <param name="password"></param>
         /// <returns></returns>
-        public UserInfoOutputDto Login(string username, string password)
+        public UserInfoDto Login(string username, string password)
         {
             UserInfo userInfo = GetByUsername(username);
             if (userInfo != null)
             {
-                UserInfoOutputDto user = userInfo.Mapper<UserInfoOutputDto>();
+                UserInfoDto user = userInfo.Mapper<UserInfoDto>();
                 string key = userInfo.SaltKey;
                 string pwd = userInfo.Password;
                 password = password.MDString3(key);
@@ -55,7 +53,7 @@ namespace Service
         /// <returns></returns>
         public UserInfo Register(UserInfo userInfo)
         {
-            UserInfo exist = GetFirstEntity(u => u.Username.Equals(userInfo.Username) || u.Email.Equals(userInfo.Email));
+            UserInfo exist = Get(u => u.Username.Equals(userInfo.Username) || u.Email.Equals(userInfo.Email));
             if (exist is null)
             {
                 var salt = $"{new Random().StrictNext()}{DateTime.Now.GetTotalMilliseconds()}".MDString2(Guid.NewGuid().ToString()).AESEncrypt();
@@ -84,7 +82,7 @@ namespace Service
         /// </summary>
         /// <param name="email"></param>
         /// <returns></returns>
-        public bool EmailExist(string email) => GetFirstEntityNoTracking(u => u.Email.Equals(email)) != null;
+        public bool EmailExist(string email) => GetNoTracking(u => u.Email.Equals(email)) != null;
 
         /// <summary>
         /// 修改密码

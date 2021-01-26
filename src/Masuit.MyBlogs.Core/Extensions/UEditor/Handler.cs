@@ -1,5 +1,6 @@
 ﻿using Microsoft.AspNetCore.Http;
 using Newtonsoft.Json;
+using System.Threading.Tasks;
 
 namespace Masuit.MyBlogs.Core.Extensions.UEditor
 {
@@ -16,7 +17,7 @@ namespace Masuit.MyBlogs.Core.Extensions.UEditor
             //this.Server = context.Server;
         }
 
-        public abstract string Process();
+        public abstract Task<string> Process();
 
         protected string WriteJson(object response)
         {
@@ -25,9 +26,9 @@ namespace Masuit.MyBlogs.Core.Extensions.UEditor
             return string.IsNullOrWhiteSpace(jsonpCallback) ? json : $"{jsonpCallback}({json});";
         }
 
-        public HttpRequest Request { get; private set; }
-        public HttpResponse Response { get; private set; }
-        public HttpContext Context { get; private set; }
+        public HttpRequest Request { get; }
+        public HttpResponse Response { get; }
+        public HttpContext Context { get; }
         //public HttpServerUtility Server { get; private set; }
     }
 }

@@ -15,7 +15,7 @@ namespace Masuit.MyBlogs.Core.Extensions.Hangfire
         /// <param name="userInfo"></param>
         /// <param name="ip"></param>
         /// <param name="type"></param>
-        void LoginRecord(UserInfoOutputDto userInfo, string ip, LoginType type);
+        void LoginRecord(UserInfoDto userInfo, string ip, LoginType type);
 
         /// <summary>
         /// 文章定时发表
@@ -35,13 +35,29 @@ namespace Masuit.MyBlogs.Core.Extensions.Hangfire
         void EverydayJob();
 
         /// <summary>
+        /// 每月的任务
+        /// </summary>
+        void EverymonthJob();
+
+        /// <summary>
         /// 友链检查
         /// </summary>
         void CheckLinks();
 
         /// <summary>
+        /// 更新友链权重
+        /// </summary>
+        /// <param name="referer"></param>
+        void UpdateLinkWeight(string referer);
+
+        /// <summary>
         /// 重建Lucene索引库
         /// </summary>
         void CreateLuceneIndex();
+
+        /// <summary>
+        /// 搜索统计
+        /// </summary>
+        void StatisticsSearchKeywords();
     }
 }

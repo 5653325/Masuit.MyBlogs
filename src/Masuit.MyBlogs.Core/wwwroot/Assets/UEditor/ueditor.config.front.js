@@ -36,7 +36,7 @@
         //工具栏上的所有的功能按钮和下拉框，可以在new编辑器的实例时选择自己需要的重新定义
         ,
         toolbars: [[
-            //'source', //源代码
+            'source', //源代码
             'removeformat', //清除格式
             //'cleardoc', //清空文档
             'autotypeset', //自动排版
@@ -50,7 +50,7 @@
             'underline', //下划线
             'strikethrough', //删除线
             'subscript', //下标
-            'fontborder', //字符边框
+            //'fontborder', //字符边框
             'superscript', //上标
             'formatmatch', //格式刷
             'blockquote', //引用
@@ -71,7 +71,7 @@
             'paragraph', //段落格式
             'insertcode', //代码语言
             'simpleupload', //单图上传
-            //'insertimage', //多图上传
+            'insertimage', //多图上传
             //'scrawl', //涂鸦
             //'insertvideo', //视频
             //'selectall', //全选
@@ -110,8 +110,8 @@
             //'fullscreen', //全屏
             //'directionalityltr', //从左向右输入
             //'directionalityrtl', //从右向左输入
-            'rowspacingtop', //段前距
-            'rowspacingbottom', //段后距
+            //'rowspacingtop', //段前距
+            //'rowspacingbottom', //段后距
             //'pagebreak', //分页
             //'insertframe', //插入Iframe
             //'attachment', //附件
@@ -276,12 +276,11 @@
 
         //fontsize
         //字号
-        ,
-        'fontsize': [10, 11, 12, 14, 16, 18, 20, 24, 36, 48, 72, 96]
+        , 'fontsize': [10, 11, 12, 14, 16, 18, 20, 24, 36, 48, 72, 96]
 
         //paragraph
         //段落格式 值留空时支持多语言自动识别，若配置，则以配置值为准
-        //,'paragraph':{'p':'', 'h1':'', 'h2':'', 'h3':'', 'h4':'', 'h5':'', 'h6':''}
+        ,'paragraph':{'p':'', 'h3':'', 'h4':'', 'h5':'', 'h6':''}
 
         //rowspacingtop
         //段间距 值和显示的名字相同
@@ -435,7 +434,7 @@
 
         //默认过滤规则相关配置项目
         //,disabledTableInTable:true  //禁止表格嵌套
-        //,allowDivTransToP:true      //允许进入编辑器的div标签自动变成p标签
+        ,allowDivTransToP:false      //允许进入编辑器的div标签自动变成p标签
         //,rgb2Hex:true               //默认产出的数据中的color自动从rgb格式变成16进制格式
 
         // xss 过滤是否开启,inserthtml等操作

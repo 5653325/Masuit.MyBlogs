@@ -2,7 +2,6 @@
 using Masuit.MyBlogs.Core.Models.Enum;
 using Masuit.Tools.Logging;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.Net.Http.Headers;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -30,24 +29,15 @@ namespace Masuit.MyBlogs.Core.Controllers
         /// <summary>
         /// 控制面板
         /// </summary>
-        /// <param name="userInfoService"></param>
-        /// <param name="postService"></param>
-        /// <param name="commentService"></param>
-        /// <param name="leaveMessageService"></param>
-        public DashboardController(IUserInfoService userInfoService, IPostService postService, ICommentService commentService, ILeaveMessageService leaveMessageService)
+        /// <returns></returns>
+        [Route("dashboard"), ResponseCache(Duration = 60, VaryByHeader = "Cookie")]
+        public ActionResult Index()
         {
-            UserInfoService = userInfoService;
-            CommentService = commentService;
-            LeaveMessageService = leaveMessageService;
-            PostService = postService;
+            return View();
         }
 
-        /// <summary>
-        /// 控制面板
-        /// </summary>
-        /// <returns></returns>
-        [Route("dashboard"), ResponseCache(Duration = 60, VaryByHeader = HeaderNames.Cookie)]
-        public ActionResult Index()
+        [Route("counter")]
+        public ActionResult Counter()
         {
             return View();
         }
@@ -58,26 +48,26 @@ namespace Masuit.MyBlogs.Core.Controllers
         /// <returns></returns>
         public ActionResult GetMessages()
         {
-            var post = PostService.LoadEntitiesFromL2CacheNoTracking(p => p.Status == Status.Pending).Select(p => new
+            var post = PostService.GetQuery(p => p.Status == Status.Pending).Select(p => new
             {
                 p.Id,
                 p.Title,
                 p.PostDate,
                 p.Author
-            });
-            var msgs = LeaveMessageService.LoadEntitiesFromL2CacheNoTracking(m => m.Status == Status.Pending).Select(p => new
+            }).ToList();
+            var msgs = LeaveMessageService.GetQuery(m => m.Status == Status.Pending).Select(p => new
             {
                 p.Id,
                 p.PostDate,
                 p.NickName
-            });
-            var comments = CommentService.LoadEntitiesFromL2CacheNoTracking(c => c.Status == Status.Pending).Select(p => new
+            }).ToList();
+            var comments = CommentService.GetQuery(c => c.Status == Status.Pending).Select(p => new
             {
                 p.Id,
                 p.CommentDate,
                 p.PostId,
                 p.NickName
-            });
+            }).ToList();
             return ResultData(new
             {
                 post,
@@ -133,7 +123,7 @@ namespace Masuit.MyBlogs.Core.Controllers
         /// 资源管理器
         /// </summary>
         /// <returns></returns>
-        [Route("filemanager"), ResponseCache(Duration = 60, VaryByHeader = HeaderNames.Cookie)]
+        [Route("filemanager"), ResponseCache(Duration = 60, VaryByHeader = "Cookie")]
         public ActionResult FileManager()
         {
             return View();

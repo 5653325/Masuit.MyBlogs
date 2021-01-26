@@ -1,0 +1,23 @@
+﻿@using System.Diagnostics
+@model Masuit.MyBlogs.Core.Models.Entity.Advertisement
+<div class="ibox">
+    <div class="ibox-content" id="@Stopwatch.GetTimestamp()">
+        <a asp-controller="Advertisement" asp-action="Redirect" asp-route-id="@Model.Id" target="_blank" id="@Stopwatch.GetTimestamp()">
+            <h4>
+                <i class="text-red size18">[荐]</i>@Model.Title
+            </h4>
+        </a>
+        <a asp-controller="Advertisement" asp-action="Redirect" asp-route-id="@Model.Id" target="_blank" id="@Stopwatch.GetTimestamp()">
+            <div class="row padding-bot10">
+                <div class="col-md-2 col-xs-12 paddingright-clear">
+                    <img class="img-thumbnail img-responsive" src="@Model.ThumbImgUrl" alt="@Model.Title" title="@Model.Title">
+                </div>
+                <div class="col-md-10 col-xs-12">
+                    <p>
+                        @Model.Description
+                    </p>
+                </div>
+            </div>
+        </a>
+    </div>
+</div>

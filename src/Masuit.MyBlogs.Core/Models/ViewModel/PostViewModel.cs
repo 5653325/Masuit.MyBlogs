@@ -1,6 +1,5 @@
-﻿using System;
-using System.Collections.Generic;
-using Masuit.MyBlogs.Core.Models.Entity;
+﻿using Masuit.MyBlogs.Core.Models.Entity;
+using System;
 
 namespace Masuit.MyBlogs.Core.Models.ViewModel
 {
@@ -9,11 +8,6 @@ namespace Masuit.MyBlogs.Core.Models.ViewModel
     /// </summary>
     public class PostViewModel : BaseEntity
     {
-        public PostViewModel()
-        {
-            Comment = new HashSet<CommentViewModel>();
-        }
-
         /// <summary>
         /// 标题
         /// </summary>
@@ -55,16 +49,6 @@ namespace Masuit.MyBlogs.Core.Models.ViewModel
         public bool IsFixedTop { get; set; }
 
         /// <summary>
-        /// 资源名
-        /// </summary>
-        public string ResourceName { get; set; }
-
-        /// <summary>
-        /// 是否是Word文档
-        /// </summary>
-        public bool IsWordDocument { get; set; }
-
-        /// <summary>
         /// 作者邮箱
         /// </summary>
         public string Email { get; set; }
@@ -90,9 +74,9 @@ namespace Masuit.MyBlogs.Core.Models.ViewModel
         public DateTime LastAccessTime { get; set; }
 
         /// <summary>
-        /// 评论
+        /// 禁止评论
         /// </summary>
-        public virtual ICollection<CommentViewModel> Comment { get; set; }
+        public bool DisableComment { get; set; }
 
         /// <summary>
         /// 所属分类名

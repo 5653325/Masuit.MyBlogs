@@ -1,13 +1,14 @@
-﻿using Common;
-using Masuit.LuceneEFCore.SearchEngine;
-using Masuit.LuceneEFCore.SearchEngine.Interfaces;
-using Masuit.MyBlogs.Core.Infrastructure.Application;
+﻿using Masuit.LuceneEFCore.SearchEngine.Interfaces;
+using Masuit.MyBlogs.Core.Common;
+using Masuit.MyBlogs.Core.Extensions.Firewall;
+using Masuit.MyBlogs.Core.Infrastructure;
 using Masuit.MyBlogs.Core.Infrastructure.Services.Interface;
 using Masuit.MyBlogs.Core.Models.DTO;
 using Masuit.MyBlogs.Core.Models.Entity;
 using Masuit.MyBlogs.Core.Models.Enum;
+using Masuit.Tools;
 using Masuit.Tools.Core.Net;
-using Masuit.Tools.Systems;
+using Masuit.Tools.Strings;
 using Microsoft.AspNetCore.Hosting;
 using System;
 using System.Collections.Generic;
@@ -15,6 +16,7 @@ using System.IO;
 using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Headers;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace Masuit.MyBlogs.Core.Extensions.Hangfire
@@ -30,8 +32,9 @@ namespace Masuit.MyBlogs.Core.Extensions.Hangfire
         private readonly ISearchDetailsService _searchDetailsService;
         private readonly ILinksService _linksService;
         private readonly IHttpClientFactory _httpClientFactory;
-        private readonly IHostingEnvironment _hostingEnvironment;
+        private readonly IWebHostEnvironment _hostEnvironment;
         private readonly ISearchEngine<DataContext> _searchEngine;
+        private readonly IAdvertisementService _advertisementService;
 
         /// <summary>
         /// hangfire后台任务
@@ -42,9 +45,9 @@ namespace Masuit.MyBlogs.Core.Extensions.Hangfire
         /// <param name="searchDetailsService"></param>
         /// <param name="linksService"></param>
         /// <param name="httpClientFactory"></param>
-        /// <param name="hostingEnvironment"></param>
+        /// <param name="HostEnvironment"></param>
         /// <param name="searchEngine"></param>
-        public HangfireBackJob(IUserInfoService userInfoService, IPostService postService, ISystemSettingService settingService, ISearchDetailsService searchDetailsService, ILinksService linksService, IHttpClientFactory httpClientFactory, IHostingEnvironment hostingEnvironment, ISearchEngine<DataContext> searchEngine)
+        public HangfireBackJob(IUserInfoService userInfoService, IPostService postService, ISystemSettingService settingService, ISearchDetailsService searchDetailsService, ILinksService linksService, IHttpClientFactory httpClientFactory, IWebHostEnvironment HostEnvironment, ISearchEngine<DataContext> searchEngine, IAdvertisementService advertisementService)
         {
             _userInfoService = userInfoService;
             _postService = postService;
@@ -52,8 +55,9 @@ namespace Masuit.MyBlogs.Core.Extensions.Hangfire
             _searchDetailsService = searchDetailsService;
             _linksService = linksService;
             _httpClientFactory = httpClientFactory;
-            _hostingEnvironment = hostingEnvironment;
+            _hostEnvironment = HostEnvironment;
             _searchEngine = searchEngine;
+            _advertisementService = advertisementService;
         }
 
         /// <summary>
@@ -62,27 +66,33 @@ namespace Masuit.MyBlogs.Core.Extensions.Hangfire
         /// <param name="userInfo"></param>
         /// <param name="ip"></param>
         /// <param name="type"></param>
-        public void LoginRecord(UserInfoOutputDto userInfo, string ip, LoginType type)
+        public void LoginRecord(UserInfoDto userInfo, string ip, LoginType type)
         {
             var result = ip.GetPhysicsAddressInfo().Result;
-            if (result?.Status == 0)
+            if (result?.Status != 0)
             {
-                string addr = result.AddressResult.FormattedAddress;
-                string prov = result.AddressResult.AddressComponent.Province;
-                LoginRecord record = new LoginRecord()
-                {
-                    IP = ip,
-                    LoginTime = DateTime.Now,
-                    LoginType = type,
-                    PhysicAddress = addr,
-                    Province = prov
-                };
-                UserInfo u = _userInfoService.GetByUsername(userInfo.Username);
-                u.LoginRecord.Add(record);
-                _userInfoService.UpdateEntitySaved(u);
-                string content = File.ReadAllText(Path.Combine(_hostingEnvironment.WebRootPath, "template", "login.html")).Replace("{{name}}", u.Username).Replace("{{time}}", DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss")).Replace("{{ip}}", record.IP).Replace("{{address}}", record.PhysicAddress);
-                CommonHelper.SendMail(_settingService.GetFirstEntity(s => s.Name.Equals("Title")).Value + "账号登录通知", content, _settingService.GetFirstEntity(s => s.Name.Equals("ReceiveEmail")).Value);
+                return;
             }
+
+            string addr = result.AddressResult.FormattedAddress;
+            string prov = result.AddressResult.AddressComponent.Province;
+            var record = new LoginRecord()
+            {
+                IP = ip,
+                LoginTime = DateTime.Now,
+                LoginType = type,
+                PhysicAddress = addr,
+                Province = prov
+            };
+            var u = _userInfoService.GetByUsername(userInfo.Username);
+            u.LoginRecord.Add(record);
+            _userInfoService.SaveChanges();
+            var content = new Template(File.ReadAllText(Path.Combine(_hostEnvironment.WebRootPath, "template", "login.html")))
+                .Set("name", u.Username)
+                .Set("time", DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"))
+                .Set("ip", record.IP)
+                .Set("address", record.PhysicAddress).Render();
+            CommonHelper.SendMail(_settingService.Get(s => s.Name.Equals("Title")).Value + "账号登录通知", content, _settingService.Get(s => s.Name.Equals("ReceiveEmail")).Value, "127.0.0.1");
         }
 
         /// <summary>
@@ -91,20 +101,20 @@ namespace Masuit.MyBlogs.Core.Extensions.Hangfire
         /// <param name="p"></param>
         public void PublishPost(Post p)
         {
-            p.Status = Status.Pended;
+            p.Status = Status.Published;
             p.PostDate = DateTime.Now;
             p.ModifyDate = DateTime.Now;
-            Post post = _postService.GetById(p.Id);
+            var post = _postService.GetById(p.Id);
             if (post is null)
             {
-                _postService.AddEntitySaved(post);
+                _postService.AddEntitySaved(p);
             }
             else
             {
-                post.Status = Status.Pended;
+                post.Status = Status.Published;
                 post.PostDate = DateTime.Now;
                 post.ModifyDate = DateTime.Now;
-                _postService.UpdateEntitySaved(post);
+                _postService.SaveChanges();
             }
         }
 
@@ -114,22 +124,14 @@ namespace Masuit.MyBlogs.Core.Extensions.Hangfire
         /// <param name="pid"></param>
         public void RecordPostVisit(int pid)
         {
-            Post post = _postService.GetById(pid);
-            var record = post.PostAccessRecord.FirstOrDefault(r => r.AccessTime == DateTime.Today);
-            if (record != null)
+            var post = _postService.GetById(pid);
+            if (post == null)
             {
-                record.ClickCount += 1;
-            }
-            else
-            {
-                post.PostAccessRecord.Add(new PostAccessRecord
-                {
-                    ClickCount = 1,
-                    AccessTime = DateTime.Today
-                });
+                return;
             }
 
-            _postService.UpdateEntity(post);
+            post.TotalViewCount += 1;
+            post.AverageViewCount = post.TotalViewCount / (DateTime.Now - post.PostDate).TotalDays;
             _postService.SaveChanges();
         }
 
@@ -140,6 +142,8 @@ namespace Masuit.MyBlogs.Core.Extensions.Hangfire
         public static void InterceptLog(IpIntercepter s)
         {
             RedisHelper.IncrBy("interceptCount");
+            var result = s.IP.GetPhysicsAddressInfo().Result;
+            s.Address = result?.Status == 0 ? result.AddressResult.FormattedAddress : s.IP.GetIPLocation();
             RedisHelper.LPush("intercept", s);
         }
 
@@ -149,23 +153,25 @@ namespace Masuit.MyBlogs.Core.Extensions.Hangfire
         public void EverydayJob()
         {
             CommonHelper.IPErrorTimes.RemoveWhere(kv => kv.Value < 100); //将访客访问出错次数少于100的移开
-            RedisHelper.Set("ArticleViewToken", SnowFlake.GetInstance().GetUniqueShortId(6)); //更新加密文章的密码
-            RedisHelper.IncrBy("Interview:RunningDays");
             DateTime time = DateTime.Now.AddMonths(-1);
             _searchDetailsService.DeleteEntitySaved(s => s.SearchTime < time);
-            foreach (var p in _postService.GetAll().AsParallel())
+            TrackData.DumpLog();
+            _advertisementService.GetQuery(a => DateTime.Now >= a.ExpireTime).UpdateFromQuery(a => new Advertisement()
             {
-                try
-                {
-                    p.AverageViewCount = p.PostAccessRecord.Average(r => r.ClickCount);
-                    p.TotalViewCount = p.PostAccessRecord.Sum(r => r.ClickCount);
-                    _postService.UpdateEntity(p);
-                    _postService.SaveChanges();
-                }
-                catch (Exception)
-                {
-                }
-            }
+                Status = Status.Unavailable
+            });
+        }
+
+        /// <summary>
+        /// 每月的任务
+        /// </summary>
+        public void EverymonthJob()
+        {
+            _advertisementService.GetAll().UpdateFromQuery(a => new Advertisement()
+            {
+                DisplayCount = 0,
+                ViewCount = 0
+            });
         }
 
         /// <summary>
@@ -173,34 +179,50 @@ namespace Masuit.MyBlogs.Core.Extensions.Hangfire
         /// </summary>
         public void CheckLinks()
         {
-            var links = _linksService.LoadEntities(l => !l.Except).AsParallel();
+            var links = _linksService.GetQuery(l => !l.Except).AsParallel();
+            var client = _httpClientFactory.CreateClient();
+            client.DefaultRequestHeaders.UserAgent.Add(ProductInfoHeaderValue.Parse("MasuitBot-link/1.0"));
+            client.DefaultRequestHeaders.Referrer = new Uri("https://masuit.com");
+            client.Timeout = TimeSpan.FromSeconds(10);
             Parallel.ForEach(links, link =>
             {
-                Uri uri = new Uri(link.Url);
-                HttpClient client = _httpClientFactory.CreateClient();
-                client.DefaultRequestHeaders.UserAgent.Add(ProductInfoHeaderValue.Parse("Mozilla/5.0"));
-                client.DefaultRequestHeaders.Referrer = new Uri("https://masuit.com");
-                client.Timeout = TimeSpan.FromHours(10);
-                client.GetAsync(uri).ContinueWith(async t =>
+                var prev = link.Status;
+                client.GetStringAsync(link.Url, new CancellationTokenSource(client.Timeout).Token).ContinueWith(t =>
                 {
                     if (t.IsCanceled || t.IsFaulted)
                     {
                         link.Status = Status.Unavailable;
-                        return;
-                    }
-                    var res = await t;
-                    if (res.IsSuccessStatusCode)
-                    {
-                        link.Status = !(await res.Content.ReadAsStringAsync()).Contains(CommonHelper.SystemSettings["Domain"]) ? Status.Unavailable : Status.Available;
                     }
                     else
                     {
-                        link.Status = Status.Unavailable;
+                        link.Status = !t.Result.Contains(CommonHelper.SystemSettings["Domain"]) ? Status.Unavailable : Status.Available;
                     }
-                    _linksService.UpdateEntity(link);
+
+                    if (link.Status != prev)
+                    {
+                        link.UpdateTime = DateTime.Now;
+                    }
+
+                    if (link.Status == Status.Unavailable)
+                    {
+                        link.Weight -= 1;
+                    }
                 }).Wait();
             });
             _linksService.SaveChanges();
+        }
+
+        /// <summary>
+        /// 更新友链权重
+        /// </summary>
+        /// <param name="referer"></param>
+        public void UpdateLinkWeight(string referer)
+        {
+            var uri = new Uri(referer);
+            _linksService.GetQuery(l => l.Url.Contains(uri.Host)).UpdateFromQuery(link => new Links()
+            {
+                Weight = link.Weight + 1
+            });
         }
 
         /// <summary>
@@ -208,16 +230,23 @@ namespace Masuit.MyBlogs.Core.Extensions.Hangfire
         /// </summary>
         public void CreateLuceneIndex()
         {
+            _searchEngine.LuceneIndexer.DeleteAll();
             _searchEngine.CreateIndex(new List<string>()
             {
-                nameof(DataContext.Post),nameof(DataContext.Issues),
+                nameof(DataContext.Post),
             });
-            var list1 = _searchEngine.Context.Issues.Where(i => i.Status != Status.Handled && i.Level != BugLevel.Fatal).ToList();
-            var list2 = _searchEngine.Context.Post.Where(i => i.Status != Status.Pended).ToList();
-            var list = new List<LuceneIndexableBaseEntity>();
-            list.AddRange(list1);
-            list.AddRange(list2);
+            var list = _postService.GetQuery(i => i.Status != Status.Published).ToList();
             _searchEngine.LuceneIndexer.Delete(list);
+        }
+
+        /// <summary>
+        /// 搜索统计
+        /// </summary>
+        public void StatisticsSearchKeywords()
+        {
+            RedisHelper.Set("SearchRank:Month", _searchDetailsService.GetRanks(DateTime.Today.AddMonths(-1)));
+            RedisHelper.Set("SearchRank:Week", _searchDetailsService.GetRanks(DateTime.Today.AddDays(-7)));
+            RedisHelper.Set("SearchRank:Today", _searchDetailsService.GetRanks(DateTime.Today));
         }
     }
 }

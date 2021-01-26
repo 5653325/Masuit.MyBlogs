@@ -1,24 +1,21 @@
-﻿@using Common
+﻿@using System.Diagnostics
+@using Masuit.MyBlogs.Core.Common
 @using Masuit.MyBlogs.Core.Models.DTO
 @using Masuit.MyBlogs.Core.Models.Entity
 @using Masuit.MyBlogs.Core.Models.ViewModel
-@using Masuit.MyBlogs.Core.Extensions
-@using Masuit.Tools.Win32
-@model Masuit.MyBlogs.Core.Models.ViewModel.IndexPageViewModel
+@using Masuit.Tools.Core.Net
+@using Microsoft.AspNetCore.Http
+@model Masuit.MyBlogs.Core.Models.ViewModel.HomePageViewModel
 @{
     ViewBag.Title = "首页";
     Layout = "~/Views/Shared/_Layout.cshtml";
     List<FastShare> shares = ViewBag.FastShare;
+    Context.Request.Path = new PathString("/p");
 }
-<style>
-    marquee p, marquee br, marquee div, marquee h1, marquee h2, marquee h3, marquee h4 {
-        display: inline !important;
-    }
-</style>
 <link href="~/Assets/banner/bootstrap-touch-slider.min.css" rel="stylesheet" />
 @if (Model.Banner.Any())
 {
-    <div id="bootstrap-touch-slider" class="carousel bs-slider fade  control-round indicators-line" data-ride="carousel" data-pause="hover" data-interval="5000">
+    <div id="bootstrap-touch-slider" class="carousel bs-slider fade  control-round indicators-line" data-ride="carousel" data-pause="hover" data-interval="5000" id="@Stopwatch.GetTimestamp()">
         <ol class="carousel-indicators">
             @for (int i = 0; i < Model.Banner.Count; i++)
             {
@@ -32,25 +29,16 @@
                 }
             }
         </ol>
-        <div class="carousel-inner" role="listbox">
+        <div class="carousel-inner" role="listbox" id="@Stopwatch.GetTimestamp()">
             @for (int i = 0; i < Model.Banner.Count; i++)
             {
                 var p = Model.Banner[i];
-                string[] style = { "slide_style_left", "slide_style_center", "slide_style_right" };
                 string[] ani = { "zoomInRight", "flipInX", "fadeInLeft", "lightSpeedIn", "fadeInUp", "zoomInLeft", "fadeInRight" };
                 Random r = new Random();
-                <div class="item @(i == 0 ? "active" : "")" class="img-responsive" style="max-height: 700px;">
-                    <img src="@p.ImageUrl" alt="@p.Title" class="slide-image" title="@CommonHelper.SystemSettings["Title"]" />
-                    <div class="bs-slider-overlay"></div>
-                    <div class="container">
-                        <div class="row">
-                            <div class="slide-text @style[r.StrictNext(style.Length)]">
-                                <h2 data-animation="animated @ani[r.StrictNext(ani.Length)]">@p.Title</h2>
-                                <p data-animation="animated @ani[r.StrictNext(ani.Length)]">@p.Description</p>
-                                <a href="/@p.Id" target="_blank" class="btn btn-default" data-animation="animated @ani[r.StrictNext(ani.Length)]">查看详情</a>
-                            </div>
-                        </div>
-                    </div>
+                <div class="item @(i == 0 ? "active" : "")" class="img-responsive" id="@Stopwatch.GetTimestamp()">
+                    <a asp-controller="Advertisement" asp-action="Redirect" asp-route-id="@p.Id" target="_blank" data-animation="animated @ani[r.Next(ani.Length)]">
+                        <img src="@p.ImageUrl" title="@p.Title" alt="@p.Description" />
+                    </a>
                 </div>
             }
         </div>
@@ -65,12 +53,12 @@
     </div>
 }
 <br />
-<script src="https://cdn.bootcss.com/jquery.touchswipe/1.6.19/jquery.touchSwipe.min.js"></script>
+<script src="https://cdn.staticfile.org/jquery.touchswipe/1.6.19/jquery.touchSwipe.min.js"></script>
 <script src="~/Assets/banner/bootstrap-touch-slider.min.js"></script>
 @if (Model.Notices.Any())
 {
     <div class="container notice">
-        <a href="/n/@(Model.Notices.FirstOrDefault()?.Id)">
+        <a asp-controller="Notice" asp-action="Details" asp-route-id="@(Model.Notices.FirstOrDefault()?.Id)">
             <h3 class="size18 text-red text-center">网站最新公告</h3>
         </a>
         @Html.Raw(Model.Notices.FirstOrDefault()?.Content.Replace("img src=", $"img title='{CommonHelper.SystemSettings["Title"]}' alt='{CommonHelper.SystemSettings["Title"]}' data-original="))
@@ -80,8 +68,8 @@
 {
     <div class="container padding-clear">
         <div class="panel panel-info">
-            <div class="panel-heading">⚡快速分享🉐　投递/寻其他网站收费资源，可到 @Html.ActionLink("投稿", "Publish", "Post") 进行投稿。</div>
-            <div class="panel-body padding-clear" style="max-height: 200px;overflow-y: auto">
+            <div class="panel-heading">⚡小撇步Tips⚡</div>
+            <div class="panel-body padding-clear">
                 <table class="table table-bordered margin-clear">
                     @for (int i = 1; i < shares.Count + 1; i += 2)
                     {
@@ -128,7 +116,7 @@
     </div>
 }
 @{
-    UserInfoOutputDto user = Context.Session.GetByRedis<UserInfoOutputDto>(SessionKey.UserInfo) ?? new UserInfoOutputDto();
+    var user = Context.Session.Get<UserInfoDto>(SessionKey.UserInfo) ?? new UserInfoDto();
     await Html.RenderPartialAsync(user.IsAdmin ? "_MainContainer_Admin" : "_MainContainer", Model);
 }
 <script type="text/javascript">

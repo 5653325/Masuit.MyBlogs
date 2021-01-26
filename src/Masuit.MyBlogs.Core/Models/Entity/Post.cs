@@ -22,9 +22,8 @@ namespace Masuit.MyBlogs.Core.Models.Entity
             ModifyDate = DateTime.Now;
             IsFixedTop = false;
             Status = Status.Pending;
-            IsWordDocument = false;
             Seminar = new HashSet<SeminarPost>();
-            PostAccessRecord = new HashSet<PostAccessRecord>();
+            PostMergeRequests = new HashSet<PostMergeRequest>();
         }
 
         /// <summary>
@@ -48,6 +47,7 @@ namespace Masuit.MyBlogs.Core.Models.Entity
         /// <summary>
         /// 受保护的内容
         /// </summary>
+        [LuceneIndex(IsHtml = true)]
         public string ProtectContent { get; set; }
 
         /// <summary>
@@ -72,21 +72,22 @@ namespace Masuit.MyBlogs.Core.Models.Entity
         public int CategoryId { get; set; }
 
         /// <summary>
-        /// 资源名
-        /// </summary>
-        public string ResourceName { get; set; }
-
-        /// <summary>
-        /// 是否是Word文档
-        /// </summary>
-        [DefaultValue(false)]
-        public bool IsWordDocument { get; set; }
-
-        /// <summary>
         /// 作者邮箱
         /// </summary>
         [Required(ErrorMessage = "作者邮箱不能为空！"), EmailAddress, LuceneIndex]
         public string Email { get; set; }
+
+        /// <summary>
+        /// 修改人名字
+        /// </summary>
+        [LuceneIndex]
+        public string Modifier { get; set; }
+
+        /// <summary>
+        /// 修改人邮箱
+        /// </summary>
+        [LuceneIndex]
+        public string ModifierEmail { get; set; }
 
         /// <summary>
         /// 标签
@@ -103,42 +104,56 @@ namespace Masuit.MyBlogs.Core.Models.Entity
         /// <summary>
         /// 支持数
         /// </summary>
-        [DefaultValue(0)]
+        [DefaultValue(0), ConcurrencyCheck]
         public int VoteUpCount { get; set; }
 
         /// <summary>
         /// 反对数
         /// </summary>
-        [DatabaseGenerated(DatabaseGeneratedOption.Computed), DefaultValue(0)]
+        [DefaultValue(0), ConcurrencyCheck]
         public int VoteDownCount { get; set; }
-
-        /// <summary>
-        /// 是否是头图文章
-        /// </summary>
-        [Required]
-        [DefaultValue(false)]
-        public bool IsBanner { get; set; }
-        /// <summary>
-        /// 描述
-        /// </summary>
-        [StringLength(255)]
-        public string Description { get; set; }
-
-        /// <summary>
-        /// 图片地址
-        /// </summary>
-        [StringLength(255)]
-        public string ImageUrl { get; set; }
 
         /// <summary>
         /// 每日平均访问量
         /// </summary>
+        [ConcurrencyCheck]
         public double AverageViewCount { get; set; }
 
         /// <summary>
         /// 总访问量
         /// </summary>
+        [ConcurrencyCheck]
         public int TotalViewCount { get; set; }
+
+        /// <summary>
+        /// 提交人IP地址
+        /// </summary>
+        public string IP { get; set; }
+
+        /// <summary>
+        /// 禁止评论
+        /// </summary>
+        public bool DisableComment { get; set; }
+
+        /// <summary>
+        /// 禁止转载
+        /// </summary>
+        public bool DisableCopy { get; set; }
+
+        /// <summary>
+        /// 限制模式
+        /// </summary>
+        public PostLimitMode? LimitMode { get; set; }
+
+        /// <summary>
+        /// 限制地区，逗号分隔
+        /// </summary>
+        public string Regions { get; set; }
+
+        /// <summary>
+        /// 限制排除地区，逗号分隔
+        /// </summary>
+        public string ExceptRegions { get; set; }
 
         /// <summary>
         /// 分类
@@ -156,13 +171,30 @@ namespace Masuit.MyBlogs.Core.Models.Entity
         public virtual ICollection<SeminarPost> Seminar { get; set; }
 
         /// <summary>
-        /// 点击记录
-        /// </summary>
-        public virtual ICollection<PostAccessRecord> PostAccessRecord { get; set; }
-
-        /// <summary>
         /// 文章历史版本
         /// </summary>
         public virtual ICollection<PostHistoryVersion> PostHistoryVersion { get; set; }
+
+        /// <summary>
+        /// 文章修改请求
+        /// </summary>
+        public virtual ICollection<PostMergeRequest> PostMergeRequests { get; set; }
+    }
+
+    /// <summary>
+    /// 地区限制
+    /// </summary>
+    public enum PostLimitMode
+    {
+        [Description("不限")]
+        All,
+        [Description("指定地区可见：{0}")]
+        AllowRegion,
+        [Description("指定地区不可见：{0}")]
+        ForbidRegion,
+        [Description("可见地区：{0}，排除地区：{1}")]
+        AllowRegionExceptForbidRegion,
+        [Description("不可见地区：{0}，排除地区：{1}")]
+        ForbidRegionExceptAllowRegion
     }
 }

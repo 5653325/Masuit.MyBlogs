@@ -1,9 +1,6 @@
 ﻿myApp.controller("seminar", ["$scope", "$http", "NgTableParams", function ($scope, $http, NgTableParams) {
-	window.hub.stop();
-	var self = this;
-	var source = [];
-	$scope.loading();
-	$scope.paginationConf = {
+    var self = this;
+    $scope.paginationConf = {
 		currentPage: $scope.currentPage ? $scope.currentPage : 1,
 		itemsPerPage: 10,
 		pagesLength: 25,
@@ -14,7 +11,6 @@
 		}
 	};
 	this.GetPageData = function (page, size) {
-		$scope.loading();
 		$http.post("/seminar/getpagedata", {
 			page,
 			size
@@ -28,9 +24,7 @@
 				filterDelay: 0,
 				dataset: res.data.Data
 			});
-			source = angular.copy(res.data.Data);
-			$scope.loadingDone();
-		});
+        });
 	};
 	self.del = function (row) {
 		swal({
@@ -108,5 +102,5 @@
 			}
 		}).catch(swal.noop);
 	}
-	$scope.loadingDone();
+	
 }]);

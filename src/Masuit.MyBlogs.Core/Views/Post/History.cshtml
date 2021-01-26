@@ -1,14 +1,16 @@
-﻿@using Masuit.MyBlogs.Core.Models.DTO
-@model List<Masuit.MyBlogs.Core.Models.Entity.PostHistoryVersion>
+﻿@using Masuit.MyBlogs.Core.Models
+@using Masuit.MyBlogs.Core.Models.Entity
+@model Masuit.Tools.Models.PagedList<Masuit.MyBlogs.Core.Models.Entity.PostHistoryVersion>
 @{
-    var post = (PostOutputDto)ViewBag.Primary;
-    ViewBag.Title = post.Title+"的历史版本";
+    var post = (Post)ViewBag.Primary;
+    ViewBag.Title = post.Title + "的历史版本";
     Layout = "~/Views/Shared/_Layout.cshtml";
+    Advertisement ad = ViewBag.Ads;
 }
 <div class="container" style="min-height: 70vh">
     <ol class="cd-breadcrumb triangle">
-        <li>@Html.ActionLink("首页", "Index", "Home")</li>
-        <li>@Html.ActionLink("文章列表", "Post", "Home")</li>
+        <li><a asp-controller="Home" asp-action="Index">首页</a></li>
+        <li><a asp-controller="Home" asp-action="Post">文章列表</a></li>
         <li>@Html.ActionLink(post.Title.Length > 40 ? post.Title.Substring(0, 40) + "..." : post.Title, "Details", "Post", new { id = post.Id }, null)</li>
         <li class="current"><em>历史版本</em></li>
     </ol>
@@ -21,43 +23,50 @@
                 <th>标题</th>
                 <th>原分类</th>
                 <th>修改时间</th>
+                <th>修改人</th>
             </tr>
         </thead>
         <tbody>
             <tr>
                 <td style="text-align: center">
-                    <input type="checkbox" name="vers" id="0"/>
+                    <input type="checkbox" name="vers" id="0" />
                 </td>
                 <td>
-                    @Html.ActionLink(post.Title, "Details", "Post", new { id = post.Id }, null) <span class="text-red">(最新版本)</span>
+                    <a asp-controller="Post" asp-action="Details" asp-route-id="@post.Id">@post.Title</a><span class="text-red">(最新版本)</span>
                 </td>
                 <td>
-                    @Html.ActionLink(post.CategoryName, "Category", "Home", new { id = post.CategoryId }, null)
+                    <a asp-controller="Home" asp-action="Category" asp-route-id="@post.CategoryId">@post.Category.Name</a>
                 </td>
                 <td>@post.ModifyDate.ToString("yyyy-MM-dd HH:mm:ss")</td>
+                <td>@post.Modifier</td>
             </tr>
-            @foreach (var p in Model)
+            @foreach (var p in Model.Data)
             {
                 <tr>
                     <td style="text-align: center">
-                        <input type="checkbox" name="vers" id="@p.Id"/>
+                        <input type="checkbox" name="vers" id="@p.Id" />
                     </td>
                     <td>
-                        @Html.ActionLink(p.Title, "HistoryVersion", "Post", new { id = p.PostId, hid = p.Id }, null)
+                        <a asp-controller="Post" asp-action="HistoryVersion" asp-route-id="@p.PostId" asp-route-hid="@p.Id">@p.Title</a>
                     </td>
                     <td>
-                        @Html.ActionLink(p.Category.Name, "Category", "Home", new { id = post.CategoryId }, null)
+                        <a asp-controller="Home" asp-action="Category" asp-route-id="@post.CategoryId">@p.Category.Name</a>
                     </td>
                     <td>@p.ModifyDate.ToString("yyyy-MM-dd HH:mm:ss")</td>
+                    <td>@p.Modifier</td>
                 </tr>
             }
         </tbody>
     </table>
     <div class="col-md-12 text-center">
         @{
-            await Html.RenderPartialAsync("_Pagination");
+            await Html.RenderPartialAsync("_Pagination", new Pagination(Model.CurrentPage, Model.PageSize, Model.TotalCount));
         }
     </div>
+    @if (ad != null)
+    {
+        await Html.RenderPartialAsync("_ArticleListAdvertisement", ad);
+    }
 </div>
 <script>
     $(function() {
@@ -69,8 +78,6 @@
 			}
 			if ($("input[name='vers']:checked").length >= 3) {
 				$("input[name='vers']:checked:eq(1)").prop('checked', false);
-           } else {
-                //$("input[name='vers']").prop('checked', false);
            }
 		});
         $("#compare").on("click", function(e) {

@@ -1,22 +1,31 @@
-﻿using Common;
+﻿using CacheManager.Core;
 using Hangfire;
+using Masuit.MyBlogs.Core.Common;
+using Masuit.MyBlogs.Core.Common.Mails;
 using Masuit.MyBlogs.Core.Extensions;
 using Masuit.MyBlogs.Core.Infrastructure.Services.Interface;
+using Masuit.MyBlogs.Core.Models.Command;
 using Masuit.MyBlogs.Core.Models.DTO;
 using Masuit.MyBlogs.Core.Models.Entity;
 using Masuit.MyBlogs.Core.Models.Enum;
 using Masuit.MyBlogs.Core.Models.ViewModel;
+using Masuit.Tools;
+using Masuit.Tools.Core.Net;
 using Masuit.Tools.Html;
+using Masuit.Tools.Logging;
+using Masuit.Tools.Strings;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Net.Http.Headers;
 using System;
 using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations;
 using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
-using System.Web;
-using Microsoft.AspNetCore.Http;
+using System.Threading.Tasks;
+using SameSiteMode = Microsoft.AspNetCore.Http.SameSiteMode;
 
 namespace Masuit.MyBlogs.Core.Controllers
 {
@@ -25,50 +34,57 @@ namespace Masuit.MyBlogs.Core.Controllers
     /// </summary>
     public class CommentController : BaseController
     {
-        private ICommentService CommentService { get; }
-        private IPostService PostService { get; }
-        private IInternalMessageService MessageService { get; }
-        private readonly IHostingEnvironment _hostingEnvironment;
-
-        /// <summary>
-        /// 评论管理
-        /// </summary>
-        /// <param name="commentService"></param>
-        /// <param name="postService"></param>
-        /// <param name="messageService"></param>
-        /// <param name="hostingEnvironment"></param>
-        public CommentController(ICommentService commentService, IPostService postService, IInternalMessageService messageService, IHostingEnvironment hostingEnvironment)
-        {
-            CommentService = commentService;
-            PostService = postService;
-            MessageService = messageService;
-            _hostingEnvironment = hostingEnvironment;
-        }
+        public ICommentService CommentService { get; set; }
+        public IPostService PostService { get; set; }
+        public IInternalMessageService MessageService { get; set; }
+        public IWebHostEnvironment HostEnvironment { get; set; }
+        public ICacheManager<int> CommentFeq { get; set; }
+        public IMailSender MailSender { get; set; }
 
         /// <summary>
         /// 发表评论
         /// </summary>
-        /// <param name="comment"></param>
+        /// <param name="dto"></param>
         /// <returns></returns>
         [HttpPost, ValidateAntiForgeryToken]
-        public ActionResult Put(CommentInputDto comment)
+        public async Task<ActionResult> Submit(CommentCommand dto)
         {
-            Post post = PostService.GetById(comment.PostId);
-            if (post is null)
+            var match = Regex.Match(dto.NickName + dto.Content.RemoveHtmlTag(), CommonHelper.BanRegex);
+            if (match.Success)
             {
-                return ResultData(null, false, "评论失败，文章不存在！");
+                LogManager.Info($"提交内容：{dto.NickName}/{dto.Content}，敏感词：{match.Value}");
+                return ResultData(null, false, "您提交的内容包含敏感词，被禁止发表，请检查您的内容后尝试重新提交！");
             }
-            UserInfoOutputDto user = HttpContext.Session.GetByRedis<UserInfoOutputDto>(SessionKey.UserInfo);
-            comment.Content = comment.Content.Trim().Replace("<p><br></p>", string.Empty);
 
-            if (comment.Content.RemoveHtml().Trim().Equals(HttpContext.Session.GetByRedis<string>("comment" + comment.PostId)))
+            if (MailSender.HasBounced(dto.Email) || (!CurrentUser.IsAdmin && dto.Email.EndsWith(CommonHelper.SystemSettings["Domain"])))
             {
-                return ResultData(null, false, "您刚才已经在这篇文章发表过一次评论了，换一篇文章吧，或者换一下评论内容吧！");
+                Response.Cookies.Delete("Email");
+                Response.Cookies.Delete("QQorWechat");
+                Response.Cookies.Delete("NickName");
+                return ResultData(null, false, "邮箱地址错误，请刷新页面后重新使用有效的邮箱地址！");
             }
-            if (Regex.Match(comment.Content, CommonHelper.ModRegex).Length <= 0)
+
+            Post post = await PostService.GetByIdAsync(dto.PostId) ?? throw new NotFoundException("评论失败，文章未找到");
+            if (post.DisableComment)
             {
-                comment.Status = Status.Pended;
+                return ResultData(null, false, "本文已禁用评论功能，不允许任何人回复！");
             }
+
+            dto.Content = dto.Content.Trim().Replace("<p><br></p>", string.Empty);
+            if (CommentFeq.GetOrAdd("Comments:" + ClientIP, 1) > 2)
+            {
+                CommentFeq.Expire("Comments:" + ClientIP, TimeSpan.FromMinutes(1));
+                return ResultData(null, false, "您的发言频率过快，请稍后再发表吧！");
+            }
+
+            var comment = dto.Mapper<Comment>();
+            if (Regex.Match(dto.NickName + dto.Content, CommonHelper.ModRegex).Length <= 0)
+            {
+                comment.Status = Status.Published;
+            }
+
+            comment.CommentDate = DateTime.Now;
+            var user = HttpContext.Session.Get<UserInfoDto>(SessionKey.UserInfo);
             if (user != null)
             {
                 comment.NickName = user.NickName;
@@ -76,83 +92,88 @@ namespace Masuit.MyBlogs.Core.Controllers
                 comment.Email = user.Email;
                 if (user.IsAdmin)
                 {
-                    comment.Status = Status.Pended;
+                    comment.Status = Status.Published;
                     comment.IsMaster = true;
                 }
             }
-            comment.Content = Regex.Replace(comment.Content.HtmlSantinizerStandard().ConvertImgSrcToRelativePath(), @"<img\s+[^>]*\s*src\s*=\s*['""]?(\S+\.\w{3,4})['""]?[^/>]*/>", "<img src=\"$1\"/>");
-            comment.CommentDate = DateTime.Now;
-            comment.Browser = comment.Browser ?? Request.Headers[HeaderNames.UserAgent];
-            comment.IP = HttpContext.Connection.RemoteIpAddress.MapToIPv4().ToString();
-            Comment com = CommentService.AddEntitySaved(comment.Mapper<Comment>());
-            if (com != null)
+            comment.Content = dto.Content.HtmlSantinizerStandard().ClearImgAttributes();
+            comment.Browser = dto.Browser ?? Request.Headers[HeaderNames.UserAgent];
+            comment.IP = ClientIP;
+            comment.Location = Request.Location();
+            comment = CommentService.AddEntitySaved(comment);
+            if (comment == null)
             {
-                HttpContext.Session.SetByRedis("comment" + comment.PostId, comment.Content.RemoveHtml().Trim());
-                var emails = new List<string>();
-                var email = CommonHelper.SystemSettings["ReceiveEmail"]; //站长邮箱
-                emails.Add(email);
-                string content = System.IO.File.ReadAllText(_hostingEnvironment.WebRootPath + "/template/notify.html").Replace("{{title}}", post.Title).Replace("{{time}}", DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss")).Replace("{{nickname}}", com.NickName).Replace("{{content}}", com.Content);
-                if (comment.Status == Status.Pended)
-                {
-                    if (!com.IsMaster)
-                    {
-                        MessageService.AddEntitySaved(new InternalMessage()
-                        {
-                            Title = $"来自【{com.NickName}】的新文章评论",
-                            Content = com.Content,
-                            Link = Url.Action("Details", "Post", new
-                            {
-                                id = com.PostId,
-                                cid = com.Id
-                            }, Request.Scheme) + "#comment"
-                        });
-                    }
-#if !DEBUG
-                    if (com.ParentId == 0)
-                    {
-                        emails.Add(PostService.GetById(com.PostId).Email);
-                        //新评论，只通知博主和楼主
-                        foreach (var s in emails.Distinct())
-                        {
-                            BackgroundJob.Enqueue(() => CommonHelper.SendMail(HttpUtility.UrlDecode(Request.Headers[HeaderNames.Referer]) + "|博客文章新评论：", content.Replace("{{link}}", Url.Action("Details", "Post", new
-                            {
-                                id = com.PostId,
-                                cid = com.Id
-                            }, Request.Scheme) + "#comment"), s));
-                        }
-                    }
-                    else
-                    {
-                        //通知博主和上层所有关联的评论访客
-                        var pid = CommentService.GetParentCommentIdByChildId(com.Id);
-                        emails = CommentService.GetSelfAndAllChildrenCommentsByParentId(pid).Select(c => c.Email).Except(new List<string>()
-                        {
-                            com.Email
-                        }).Distinct().ToList();
-                        string link = Url.Action("Details", "Post", new
-                        {
-                            id = com.PostId,
-                            cid = com.Id
-                        }, Request.Scheme) + "#comment";
-                        foreach (var s in emails)
-                        {
-                            BackgroundJob.Enqueue(() => CommonHelper.SendMail($"{HttpUtility.UrlDecode(Request.Headers[HeaderNames.Referer])}{CommonHelper.SystemSettings["Title"]}文章评论回复：", content.Replace("{{link}}", link), s));
-                        }
-                    }
-#endif
-                    return ResultData(null, true, "评论发表成功，服务器正在后台处理中，这会有一定的延迟，稍后将显示到评论列表中");
-                }
-                foreach (var s in emails.Distinct())
-                {
-                    BackgroundJob.Enqueue(() => CommonHelper.SendMail(HttpUtility.UrlDecode(Request.Headers[HeaderNames.Referer]) + "|博客文章新评论(待审核)：", content.Replace("{{link}}", Url.Action("Details", "Post", new
-                    {
-                        id = com.PostId,
-                        cid = com.Id
-                    }, Request.Scheme) + "#comment") + "<p style='color:red;'>(待审核)</p>", s));
-                }
-                return ResultData(null, true, "评论成功，待站长审核通过以后将显示");
+                return ResultData(null, false, "评论失败");
             }
-            return ResultData(null, false, "评论失败");
+
+            Response.Cookies.Append("Email", comment.Email, new CookieOptions()
+            {
+                Expires = DateTimeOffset.Now.AddYears(1),
+                SameSite = SameSiteMode.Lax
+            });
+            Response.Cookies.Append("QQorWechat", comment.QQorWechat + "", new CookieOptions()
+            {
+                Expires = DateTimeOffset.Now.AddYears(1),
+                SameSite = SameSiteMode.Lax
+            });
+            Response.Cookies.Append("NickName", comment.NickName, new CookieOptions()
+            {
+                Expires = DateTimeOffset.Now.AddYears(1),
+                SameSite = SameSiteMode.Lax
+            });
+            CommentFeq.AddOrUpdate("Comments:" + ClientIP, 1, i => i + 1, 5);
+            CommentFeq.Expire("Comments:" + ClientIP, TimeSpan.FromMinutes(1));
+            var emails = new HashSet<string>();
+            var email = CommonHelper.SystemSettings["ReceiveEmail"]; //站长邮箱
+            emails.Add(email);
+            var content = new Template(await System.IO.File.ReadAllTextAsync(HostEnvironment.WebRootPath + "/template/notify.html"))
+                .Set("title", post.Title)
+                .Set("time", DateTime.Now.ToTimeZoneF(HttpContext.Session.Get<string>(SessionKey.TimeZone)))
+                .Set("nickname", comment.NickName)
+                .Set("content", comment.Content);
+            if (comment.Status == Status.Published)
+            {
+                if (!comment.IsMaster)
+                {
+                    await MessageService.AddEntitySavedAsync(new InternalMessage()
+                    {
+                        Title = $"来自【{comment.NickName}】在文章《{post.Title}》的新评论",
+                        Content = comment.Content,
+                        Link = Url.Action("Details", "Post", new { id = comment.PostId, cid = comment.Id }) + "#comment"
+                    });
+                }
+                if (comment.ParentId == 0)
+                {
+                    emails.Add(post.Email);
+                    emails.Add(post.ModifierEmail);
+                    //新评论，只通知博主和楼主
+                    foreach (var s in emails)
+                    {
+                        BackgroundJob.Enqueue(() => CommonHelper.SendMail(Request.Host + "|博客文章新评论：", content.Set("link", Url.Action("Details", "Post", new { id = comment.PostId, cid = comment.Id }, Request.Scheme) + "#comment").Render(false), s, ClientIP));
+                    }
+                }
+                else
+                {
+                    //通知博主和上层所有关联的评论访客
+                    var pid = CommentService.GetParentCommentIdByChildId(comment.Id);
+                    emails.AddRange(CommentService.GetSelfAndAllChildrenCommentsByParentId(pid).Select(c => c.Email).ToArray());
+                    emails.AddRange(post.Email, post.ModifierEmail);
+                    emails.Remove(comment.Email);
+                    string link = Url.Action("Details", "Post", new { id = comment.PostId, cid = comment.Id }, Request.Scheme) + "#comment";
+                    foreach (var s in emails)
+                    {
+                        BackgroundJob.Enqueue(() => CommonHelper.SendMail($"{Request.Host}{CommonHelper.SystemSettings["Title"]}文章评论回复：", content.Set("link", link).Render(false), s, ClientIP));
+                    }
+                }
+                return ResultData(null, true, "评论发表成功，服务器正在后台处理中，这会有一定的延迟，稍后将显示到评论列表中");
+            }
+
+            foreach (var s in emails)
+            {
+                BackgroundJob.Enqueue(() => CommonHelper.SendMail(Request.Host + "|博客文章新评论(待审核)：", content.Set("link", Url.Action("Details", "Post", new { id = comment.PostId, cid = comment.Id }, Request.Scheme) + "#comment").Render(false) + "<p style='color:red;'>(待审核)</p>", s, ClientIP));
+            }
+
+            return ResultData(null, true, "评论成功，待站长审核通过以后将显示");
         }
 
         /// <summary>
@@ -161,22 +182,22 @@ namespace Masuit.MyBlogs.Core.Controllers
         /// <param name="id"></param>
         /// <returns></returns>
         [HttpPost]
-        public ActionResult CommentVote(int id)
+        public async Task<ActionResult> CommentVote(int id)
         {
-            Comment cm = CommentService.GetFirstEntity(c => c.Id == id && c.Status == Status.Pended);
             if (HttpContext.Session.Get("cm" + id) != null)
             {
                 return ResultData(null, false, "您刚才已经投过票了，感谢您的参与！");
             }
-            if (cm != null)
+
+            var cm = await CommentService.GetAsync(c => c.Id == id && c.Status == Status.Published) ?? throw new NotFoundException("评论不存在！");
+            cm.VoteCount++;
+            bool b = await CommentService.SaveChangesAsync() > 0;
+            if (b)
             {
-                cm.VoteCount++;
-                CommentService.UpdateEntity(cm);
                 HttpContext.Session.Set("cm" + id, id.GetBytes());
-                bool b = CommentService.SaveChanges() > 0;
-                return ResultData(null, b, b ? "投票成功" : "投票失败");
             }
-            return ResultData(null, false, "非法操作");
+
+            return ResultData(null, b, b ? "投票成功" : "投票失败");
         }
 
         /// <summary>
@@ -187,69 +208,21 @@ namespace Masuit.MyBlogs.Core.Controllers
         /// <param name="size"></param>
         /// <param name="cid"></param>
         /// <returns></returns>
-        [HttpPost]
-        public ActionResult GetComments(int? id, int page = 1, int size = 5, int cid = 0)
+        public ActionResult GetComments(int? id, [Range(1, int.MaxValue, ErrorMessage = "页码必须大于0")] int page = 1, [Range(1, 50, ErrorMessage = "页大小必须在0到50之间")] int size = 15, int cid = 0)
         {
-            UserInfoOutputDto user = HttpContext.Session.GetByRedis<UserInfoOutputDto>(SessionKey.UserInfo) ?? new UserInfoOutputDto();
             int total; //总条数，用于前台分页
             if (cid != 0)
             {
                 int pid = CommentService.GetParentCommentIdByChildId(cid);
-                List<Comment> single = CommentService.GetSelfAndAllChildrenCommentsByParentId(pid).ToList();
+                var single = CommentService.GetSelfAndAllChildrenCommentsByParentId(pid).ToList();
                 if (single.Any())
                 {
                     total = 1;
-                    return ResultData(new
+                    foreach (var c in single)
                     {
-                        total,
-                        parentTotal = total,
-                        page,
-                        size,
-                        rows = single.Mapper<IList<CommentViewModel>>()
-                    });
-                }
-            }
-            IList<Comment> parent = CommentService.LoadPageEntities(page, size, out total, c => c.PostId == id && c.ParentId == 0 && (c.Status == Status.Pended || user.IsAdmin), c => c.CommentDate, false).ToList();
-            if (!parent.Any())
-            {
-                return ResultData(null, false, "没有评论");
-            }
-            var list = new List<Comment>();
-            parent.ForEach(c => CommentService.GetSelfAndAllChildrenCommentsByParentId(c.Id).ForEach(result => list.Add(result)));
-            var qlist = list.Where(c => (c.Status == Status.Pended || user.IsAdmin));
-            if (total > 0)
-            {
-                return ResultData(new
-                {
-                    total,
-                    parentTotal = total,
-                    page,
-                    size,
-                    rows = qlist.Mapper<IList<CommentViewModel>>()
-                });
-            }
-            return ResultData(null, false, "没有评论");
-        }
+                        c.CommentDate = c.CommentDate.ToTimeZone(HttpContext.Session.Get<string>(SessionKey.TimeZone));
+                    }
 
-        /// <summary>
-        /// 分页获取评论
-        /// </summary>
-        /// <param name="page"></param>
-        /// <param name="size"></param>
-        /// <param name="cid"></param>
-        /// <returns></returns>
-        [HttpPost]
-        public ActionResult GetPageComments(int page = 1, int size = 5, int cid = 0)
-        {
-            UserInfoOutputDto user = HttpContext.Session.GetByRedis<UserInfoOutputDto>(SessionKey.UserInfo) ?? new UserInfoOutputDto();
-            int total; //总条数，用于前台分页
-            if (cid != 0)
-            {
-                int pid = CommentService.GetParentCommentIdByChildId(cid);
-                List<Comment> single = CommentService.GetSelfAndAllChildrenCommentsByParentId(pid).ToList();
-                if (single.Any())
-                {
-                    total = 1;
                     return ResultData(new
                     {
                         total,
@@ -260,14 +233,17 @@ namespace Masuit.MyBlogs.Core.Controllers
                     });
                 }
             }
-            IList<Comment> parent = CommentService.LoadPageEntities(page, size, out total, c => c.ParentId == 0 && (c.Status == Status.Pended || user.IsAdmin), c => c.CommentDate, false).ToList();
-            if (!parent.Any())
+            var parent = CommentService.GetPagesNoTracking(page, size, c => c.PostId == id && c.ParentId == 0 && (c.Status == Status.Published || CurrentUser.IsAdmin), c => c.CommentDate, false);
+            if (!parent.Data.Any())
             {
                 return ResultData(null, false, "没有评论");
             }
-            var list = new List<Comment>();
-            parent.ForEach(c => CommentService.GetSelfAndAllChildrenCommentsByParentId(c.Id).ForEach(result => list.Add(result)));
-            var qlist = list.Where(c => (c.Status == Status.Pended || user.IsAdmin));
+            total = parent.TotalCount;
+            var result = parent.Data.SelectMany(c => CommentService.GetSelfAndAllChildrenCommentsByParentId(c.Id).Where(x => x.Status == Status.Published || CurrentUser.IsAdmin)).Select(c =>
+            {
+                c.CommentDate = c.CommentDate.ToTimeZone(HttpContext.Session.Get<string>(SessionKey.TimeZone));
+                return c;
+            }).ToList();
             if (total > 0)
             {
                 return ResultData(new
@@ -276,7 +252,7 @@ namespace Masuit.MyBlogs.Core.Controllers
                     parentTotal = total,
                     page,
                     size,
-                    rows = qlist.Mapper<IList<CommentViewModel>>()
+                    rows = result.Mapper<IList<CommentViewModel>>()
                 });
             }
             return ResultData(null, false, "没有评论");
@@ -287,32 +263,35 @@ namespace Masuit.MyBlogs.Core.Controllers
         /// </summary>
         /// <param name="id"></param>
         /// <returns></returns>
-        [Authority]
-        public ActionResult Pass(int id)
+        [MyAuthorize]
+        public async Task<ActionResult> Pass(int id)
         {
-            Comment comment = CommentService.GetById(id);
-            comment.Status = Status.Pended;
-            Post post = PostService.GetById(comment.PostId);
-            bool b = CommentService.UpdateEntitySaved(comment);
-            var pid = comment.ParentId == 0 ? comment.Id : CommentService.GetParentCommentIdByChildId(id);
-#if !DEBUG
-            string content = System.IO.File.ReadAllText(Path.Combine(_hostingEnvironment.WebRootPath, "template", "notify.html")).Replace("{{title}}", post.Title).Replace("{{time}}", DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss")).Replace("{{nickname}}", comment.NickName).Replace("{{content}}", comment.Content);
-            var emails = CommentService.GetSelfAndAllChildrenCommentsByParentId(pid).Select(c => c.Email).Distinct().Except(new List<string>()
+            Comment comment = await CommentService.GetByIdAsync(id) ?? throw new NotFoundException("评论不存在！");
+            comment.Status = Status.Published;
+            Post post = await PostService.GetByIdAsync(comment.PostId);
+            bool b = await CommentService.SaveChangesAsync() > 0;
+            if (b)
             {
-                comment.Email,
-                CommonHelper.SystemSettings["ReceiveEmail"]
-            }).ToList();
-            string link = Url.Action("Details", "Post", new
-            {
-                id = comment.PostId,
-                cid = pid
-            }, Request.Scheme) + "#comment";
-            foreach (var email in emails)
-            {
-                BackgroundJob.Enqueue(() => CommonHelper.SendMail($"{Request.Host}{CommonHelper.SystemSettings["Title"]}文章评论回复：", content.Replace("{{link}}", link), email));
+                var pid = comment.ParentId == 0 ? comment.Id : CommentService.GetParentCommentIdByChildId(id);
+                var content = new Template(await System.IO.File.ReadAllTextAsync(Path.Combine(HostEnvironment.WebRootPath, "template", "notify.html")))
+                    .Set("title", post.Title)
+                    .Set("time", DateTime.Now.ToTimeZoneF(HttpContext.Session.Get<string>(SessionKey.TimeZone)))
+                    .Set("nickname", comment.NickName)
+                    .Set("content", comment.Content);
+                var emails = CommentService.GetSelfAndAllChildrenCommentsByParentId(pid).Select(c => c.Email).Append(post.ModifierEmail).Except(new List<string> { comment.Email, CurrentUser.Email }).ToHashSet();
+                var link = Url.Action("Details", "Post", new
+                {
+                    id = comment.PostId,
+                    cid = pid
+                }, Request.Scheme) + "#comment";
+                foreach (var email in emails)
+                {
+                    BackgroundJob.Enqueue(() => CommonHelper.SendMail($"{Request.Host}{CommonHelper.SystemSettings["Title"]}文章评论回复：", content.Set("link", link).Render(false), email, ClientIP));
+                }
+                return ResultData(null, true, "审核通过！");
             }
-#endif
-            return ResultData(null, b, b ? "审核通过！" : "审核失败！");
+
+            return ResultData(null, false, "审核失败！");
         }
 
         /// <summary>
@@ -320,7 +299,7 @@ namespace Masuit.MyBlogs.Core.Controllers
         /// </summary>
         /// <param name="id"></param>
         /// <returns></returns>
-        [Authority]
+        [MyAuthorize]
         public ActionResult Delete(int id)
         {
             var b = CommentService.DeleteEntitiesSaved(CommentService.GetSelfAndAllChildrenCommentsByParentId(id).ToList());
@@ -331,12 +310,16 @@ namespace Masuit.MyBlogs.Core.Controllers
         /// 获取未审核的评论
         /// </summary>
         /// <returns></returns>
-        [Authority]
-        public ActionResult GetPendingComments(int page = 1, int size = 10)
+        [MyAuthorize]
+        public ActionResult GetPendingComments([Range(1, int.MaxValue, ErrorMessage = "页码必须大于0")] int page = 1, [Range(1, 50, ErrorMessage = "页大小必须在0到50之间")] int size = 15)
         {
-            List<CommentOutputDto> list = CommentService.LoadPageEntities<DateTime, CommentOutputDto>(page, size, out int total, c => c.Status == Status.Pending, c => c.CommentDate, false).ToList();
-            var pageCount = Math.Ceiling(total * 1.0 / size).ToInt32();
-            return PageResult(list, pageCount, total);
+            var pages = CommentService.GetPages<DateTime, CommentDto>(page, size, c => c.Status == Status.Pending, c => c.CommentDate, false);
+            foreach (var item in pages.Data)
+            {
+                item.CommentDate = item.CommentDate.ToTimeZone(HttpContext.Session.Get<string>(SessionKey.TimeZone));
+            }
+
+            return Ok(pages);
         }
     }
 }

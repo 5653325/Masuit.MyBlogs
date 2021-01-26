@@ -1,5 +1,10 @@
-﻿myApp.controller("system", ["$scope", "$http", function($scope, $http) {
-	window.hub.stop();
+﻿myApp.controller("file", ["$scope", "$http", function ($scope, $http) {
+}]);
+myApp.controller("task", ["$scope", "$http", function ($scope, $http) {
+}]);
+myApp.controller("dashboard", ["$scope", function ($scope) {
+}]);
+myApp.controller("system", ["$scope", "$http", function($scope, $http) {
 	$scope.request("/system/getsettings", null, function(data) {
 		var settings = {};
 		Enumerable.From(data.Data).Select(e => {
@@ -12,53 +17,33 @@
 		});
 		$scope.Settings = settings;
 	});
-	$scope.setImage = function(property) {
-		swal({
-			title: '请选择一张图片',
-			input: 'file',
-			showCloseButton: true,
-			confirmButtonColor: "#DD6B55",
-			confirmButtonText: "确定",
-			cancelButtonText: "取消",
-			showLoaderOnConfirm: true,
-			animation: true,
-			allowOutsideClick: false,
-			inputAttributes: {
-				accept: 'image/*'
-			},
-			preConfirm: function(value) {
-				return new Promise(function(resolve) {
-					if (value) {
-						var reader = new FileReader;
-						reader.onload = function (e) {
-							$http.post("/upload/DecodeDataUri", {
-								data: e.target.result
-							}).then(function (res) {
-								resolve(res.data.Data);
-							}, function (error, status, result) {
-
-							});
-						};
-						reader.readAsDataURL(value);
-					} else {
-						reject('请选择图片');
-					}
-				});
-			},
-			inputValidator: function(value) {
-				return new Promise(function(resolve, reject) {
-					if (value) {
-						resolve();
-					} else {
-						reject('请选择图片');
-					}
-				});
+	$scope.uploadImage = function() {
+		
+        $("#setImageForm").ajaxSubmit({
+			url: "/Upload",
+			type: "post",
+			success: function(data) {
+				
+				document.getElementById("setImageForm").reset();
+				$scope.$apply(function () {
+			     　$scope.Settings[$scope.property] = data.Data;
+			    });
+				layer.closeAll();
 			}
-		}).then(function(data) {
-			$scope.$apply(function() {
-				$scope.Settings[property] = data;
-			});
-		}).catch(swal.noop);
+		});
+    };
+	$scope.setImage = function(property) {
+		layer.open({
+			type: 1,
+			zIndex: 20,
+			title: '请选择一张图片',
+			area: '420px', //宽高
+			content: $("#setImageForm"),
+			cancel: function(index, layero) {
+				return true;
+			}
+		});
+		$scope.property=property;
 	}
 	$scope.save = function() {
 		swal({
@@ -106,7 +91,8 @@
 			user: $scope.Settings.EmailFrom,
 			pwd: $scope.Settings.EmailPwd,
 			port: $scope.Settings.SmtpPort,
-			to: $scope.Settings.ReceiveEmail
+			to: $scope.Settings.ReceiveEmail,
+			ssl:$scope.Settings.EnableSsl
 		}).then(function(res) {
 			if (res.data.Success) {
 				swal(res.data.Message,'','success');
@@ -146,16 +132,60 @@
 			swal('服务请求失败','','error');
 		}).catch(swal.noop);
 	}
-	$scope.DisabledEmailBroadcast= function() {
-		if($scope.Settings.DisabledEmailBroadcast=="true") {
-			$scope.Settings.DisabledEmailBroadcast="false";
+
+	$scope.EmailEnableSsl= function() {
+		if($scope.Settings.EnableSsl=="true") {
+			$scope.Settings.EnableSsl="false";
 		} else {
-			$scope.Settings.DisabledEmailBroadcast="true";
+			$scope.Settings.EnableSsl="true";
+		}
+	}
+
+	$scope.CloseSite= function() {
+		if($scope.Settings.CloseSite=="true") {
+			$scope.Settings.CloseSite="false";
+		} else {
+			swal({
+				title: '确定要关闭站点么?',
+				text: "一旦关闭，所有前台功能将不再可用！所有前台访问将会被重定向到：/ComingSoon",
+				type: 'warning',
+				showCancelButton: true,
+				confirmButtonColor: '#3085d6',
+				cancelButtonColor: '#d33',
+				confirmButtonText: '确定',
+				cancelButtonText: '取消',
+			}).then(function(isConfirm) {
+				if (isConfirm) {
+					$scope.Settings.CloseSite = "true";
+					$scope.$apply();
+				}
+			});
+		}
+	}
+
+	$scope.DataReadonly= function() {
+		if($scope.Settings.DataReadonly=="true") {
+			$scope.Settings.DataReadonly="false";
+		} else {
+			swal({
+				title: '确定要开启站点写保护么?',
+				text: "一旦开启，前台所有表单数据将无法被提交！",
+				type: 'warning',
+				showCancelButton: true,
+				confirmButtonColor: '#3085d6',
+				cancelButtonColor: '#d33',
+				confirmButtonText: '确定',
+				cancelButtonText: '取消',
+			}).then(function(isConfirm) {
+				if (isConfirm) {
+					$scope.Settings.DataReadonly = "true";
+					$scope.$apply();
+				}
+			});
 		}
 	}
 }]);
-myApp.controller("log", ["$scope", "$http", function ($scope, $http) {
-	window.hub.stop();
+myApp.controller("log", ["$scope", function ($scope) {
 	$scope.getfiles= function() {
 		$scope.request("/dashboard/GetLogfiles", null, function(data) {
 			$scope.files = data.Data;
@@ -202,8 +232,7 @@ myApp.controller("log", ["$scope", "$http", function ($scope, $http) {
 		}).catch(swal.noop);
 	}
 }]);
-myApp.controller("email", ["$scope", "$http", function ($scope, $http) {
-	window.hub.stop();
+myApp.controller("email", ["$scope", "$http", function ($scope) {
 	$scope.getfiles = function () {
 		$scope.request("/file/Getfiles", {path:"/template"}, function (data) {
 			$scope.files = data.Data;
@@ -248,15 +277,8 @@ myApp.controller("email", ["$scope", "$http", function ($scope, $http) {
 		});
 	}
 }]);
-myApp.controller("file", ["$scope", "$http", function ($scope, $http) {
-	window.hub.stop();
-}]);
-myApp.controller("task", ["$scope", "$http", function ($scope, $http) {
-	window.hub.stop();
-}]);
 myApp.controller("firewall", ["$scope", "$http","NgTableParams","$timeout", function ($scope, $http,NgTableParams,$timeout) {
-	window.hub.stop();
-	var self = this;
+    var self = this;
 	var data = [];
 	self.data = {};
 	$scope.request("/system/getsettings", null, function(data) {
@@ -279,8 +301,10 @@ myApp.controller("firewall", ["$scope", "$http","NgTableParams","$timeout", func
 			});
 			data = res.Data.list;
 			$scope.interceptCount=res.Data.interceptCount;
+			$scope.ranking=res.Data.ranking;
 		});
 	}
+
 	self.load();
 	this.clear= function() {
 		swal({
@@ -304,13 +328,29 @@ myApp.controller("firewall", ["$scope", "$http","NgTableParams","$timeout", func
 			self.load();
 		}).catch(swal.noop);
 	}
-	$scope.EnableDenyAreaPolicy= function() {
-		if($scope.Settings.EnableDenyArea=="true") {
-			$scope.Settings.EnableDenyArea="false";
+
+	$scope.EnableFirewall= function() {
+		if($scope.Settings.FirewallEnabled=="true") {
+            swal({
+				title: '确定要关闭网站防火墙么?',
+				text: "一旦关闭，网站将面临可能会被流量攻击的风险！",
+				type: 'warning',
+				showCancelButton: true,
+				confirmButtonColor: '#3085d6',
+				cancelButtonColor: '#d33',
+				confirmButtonText: '确定',
+				cancelButtonText: '取消',
+			}).then(function(isConfirm) {
+				if (isConfirm) {
+			        $scope.Settings.FirewallEnabled="false";
+					$scope.$apply();
+				}
+			});
 		} else {
-			$scope.Settings.EnableDenyArea="true";
+			$scope.Settings.FirewallEnabled="true";
 		}
 	}
+
 	$scope.getIPBlackList= function() {
 		$scope.request("/system/IpBlackList",null, function (data) {
 			swal({
@@ -337,6 +377,7 @@ myApp.controller("firewall", ["$scope", "$http","NgTableParams","$timeout", func
 			}).catch(swal.noop);
 		});
 	}
+
 	$scope.getIPWhiteList= function() {
 		$scope.request("/system/IpWhiteList",null, function (data) {
 			swal({
@@ -363,37 +404,7 @@ myApp.controller("firewall", ["$scope", "$http","NgTableParams","$timeout", func
 			}).catch(swal.noop);
 		});
 	}
-	$scope.getAreaIPBlackList= function() {
-		$scope.request("/system/AreaIPBlackList",null, function (data) {
-			layer.open({
-				type: 1,
-				zIndex: 20,
-				title: '查看地区IP黑名单',
-				area: (window.screen.width > 360 ? 360 : window.screen.width) + 'px',// '340px'], //宽高
-				content: $("#modal"),
-				success: function(layero, index) {
-					$('.ui.dropdown.region').dropdown({
-						onChange: function (value) {
-							$scope.AreaIPs = $scope.AreaIPBlackList[value];
-							$scope.AreaIPsCopy = $scope.AreaIPBlackList[value];
-						},
-						message: {
-							maxSelections: '最多选择 {maxCount} 项',
-							noResults: '无搜索结果！'
-						}
-					});
-					$scope.AreaIPBlackList = data.Data;
-					$scope.Areas = Object.keys(data.Data);
-					$timeout(function () {
-						$('.ui.dropdown.region').dropdown("set selected", [$scope.Areas[0]]);
-					}, 100);
-				},
-				end: function() {
-					$("#modal").css("display", "none");
-				}
-			});
-		});
-	}
+
 	$scope.getIPRangeBlackList= function() {
 		$scope.request("/system/GetIPRangeBlackList",null, function (data) {
 			swal({
@@ -420,6 +431,7 @@ myApp.controller("firewall", ["$scope", "$http","NgTableParams","$timeout", func
 			}).catch(swal.noop);
 		});
 	}
+
 	$scope.save = function() {
 		swal({
 			title: '确认保存吗？',
@@ -460,6 +472,7 @@ myApp.controller("firewall", ["$scope", "$http","NgTableParams","$timeout", func
 			});
 		}).catch(swal.noop);
 	}
+
 	$scope.addToWhiteList= function(ip) {
 		swal({
 			title: "确认添加白名单吗？",
@@ -484,18 +497,76 @@ myApp.controller("firewall", ["$scope", "$http","NgTableParams","$timeout", func
 			}
 		}).then(function (data) {
 			if (data.Success) {
-				$scope.AreaIPs.remove(ip);
 				swal("添加成功",'','success');
 			} else {
 				swal("添加失败",'','error');
 			}
 		}).catch(swal.noop);
 	}
-	$scope.searchIP= function(ip) {
-		if (ip) {
-			$scope.AreaIPs = _.filter($scope.AreaIPsCopy, i => i.indexOf(ip) > -1);
-		} else {
-			$scope.AreaIPs =$scope.AreaIPsCopy;
+		$scope.addToBlackList = function(ip) {
+			swal({
+				title: "确认添加黑名单吗？",
+				text: "将"+ip+"添加到黑名单",
+				showCancelButton: true,
+				confirmButtonColor: "#DD6B55",
+				confirmButtonText: "确定",
+				cancelButtonText: "取消",
+				animation: true,
+				allowOutsideClick: false,
+				showLoaderOnConfirm: true,
+				preConfirm: function () {
+					return new Promise(function (resolve, reject) {
+						$http.post("/system/AddToBlackList", {ip}, {
+							'Content-Type': 'application/x-www-form-urlencoded'
+						}).then(function(res) {
+							resolve(res.data);
+						}, function() {
+							reject("请求服务器失败！");
+						});
+					});
+				}
+			}).then(function (data) {
+				if (data.Success) {
+					swal("添加成功",'','success');
+				} else {
+					swal("添加失败",'','error');
+				}
+			}).catch(swal.noop);
 		}
-	}
+}]);
+
+myApp.controller("sendbox", ["$scope", "$http", function ($scope, $http) {
+	$http.post("/system/sendbox").then(function (res) {
+		$scope.Mails = res.data;
+	});
+	$scope.addToBlackList = function(ip) {
+			swal({
+				title: "确认添加黑名单吗？",
+				text: "将"+ip+"添加到黑名单",
+				showCancelButton: true,
+				confirmButtonColor: "#DD6B55",
+				confirmButtonText: "确定",
+				cancelButtonText: "取消",
+				animation: true,
+				allowOutsideClick: false,
+				showLoaderOnConfirm: true,
+				preConfirm: function () {
+					return new Promise(function (resolve, reject) {
+						$http.post("/system/AddToBlackList", {ip}, {
+							'Content-Type': 'application/x-www-form-urlencoded'
+						}).then(function(res) {
+							resolve(res.data);
+						}, function() {
+							reject("请求服务器失败！");
+						});
+					});
+				}
+			}).then(function (data) {
+				if (data.Success) {
+					swal("添加成功",'','success');
+				} else {
+					swal("添加失败",'','error');
+				}
+			}).catch(swal.noop);
+		}
 }]);

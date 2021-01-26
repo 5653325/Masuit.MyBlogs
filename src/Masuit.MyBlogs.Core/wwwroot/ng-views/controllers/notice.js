@@ -1,7 +1,5 @@
-﻿myApp.controller("noticeAdd", ["$scope", "$http", "$location", "$timeout", function ($scope, $http, $location, $timeout) {
-	window.hub.stop();
-	$scope.notice = {};
-	$scope.loading();
+﻿myApp.controller("noticeAdd", ["$scope", "$http", "$location", function ($scope, $http, $location) {
+    $scope.notice = {};
 	$scope.notice.Id = $location.search()['id']||0;
 	if ($scope.notice.Id) {
 		$scope.request("/notice/get", { id: $scope.notice.Id }, function (res) {
@@ -10,14 +8,12 @@
 	}
 	//异步提交表单开始
 	$scope.submit = function (notice) {
-		$scope.loading();
 		var url = "/notice/write";
 		if (notice.Id) {
 			url = "/notice/edit";
 		}
 		$http.post(url, notice).then(function (res) {
 			var data = res.data;
-			$scope.loadingDone();
 			if (data.Success) {
 				window.notie.alert({
 					type: 1,
@@ -36,12 +32,9 @@
 		});
 	}
 	//异步提交表单结束
-	$scope.loadingDone();
 }]);
 myApp.controller("noticeList", ["$scope", "$http", "NgTableParams", function ($scope, $http, NgTableParams) {
-	window.hub.stop();
 	var self = this;
-	$scope.loading();
 	$scope.paginationConf = {
 		currentPage: 1,
 		//totalItems: $scope.total,
@@ -54,7 +47,6 @@ myApp.controller("noticeList", ["$scope", "$http", "NgTableParams", function ($s
 		}
 	};
 	this.GetPageData = function (page, size) {
-		$scope.loading();
 		$http.post("/notice/getpagedata", {
 			page,
 			size
@@ -67,7 +59,6 @@ myApp.controller("noticeList", ["$scope", "$http", "NgTableParams", function ($s
 					filterDelay: 0,
 					dataset: res.data.Data
 				});
-			$scope.loadingDone();
 		});
 	};
 	self.del = function (row) {
@@ -103,6 +94,4 @@ myApp.controller("noticeList", ["$scope", "$http", "NgTableParams", function ($s
 		}, function () {
 		}).catch(swal.noop);
 	}
-	$scope.loadingDone();
-
 }]);

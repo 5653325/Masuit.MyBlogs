@@ -1,14 +1,19 @@
-﻿using Masuit.MyBlogs.Core.Infrastructure.Application;
-using Masuit.MyBlogs.Core.Infrastructure.Repository.Interface;
+﻿using Masuit.MyBlogs.Core.Infrastructure.Repository.Interface;
 using Masuit.MyBlogs.Core.Models.Entity;
-using System.Data;
 
 namespace Masuit.MyBlogs.Core.Infrastructure.Repository
 {
     public partial class PostRepository : BaseRepository<Post>, IPostRepository
     {
-        public PostRepository(DataContext dbContext, IDbConnection connection) : base(dbContext, connection)
+        /// <summary>
+        /// 添加实体
+        /// </summary>
+        /// <param name="t">需要添加的实体</param>
+        /// <returns>添加成功</returns>
+        public override Post AddEntity(Post t)
         {
+            DataContext.Add(t);
+            return t;
         }
     }
 }

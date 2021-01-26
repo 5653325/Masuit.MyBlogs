@@ -1,13 +1,14 @@
-﻿using Masuit.MyBlogs.Core.Infrastructure.Services.Interface;
+﻿using Masuit.MyBlogs.Core.Extensions;
+using Masuit.MyBlogs.Core.Infrastructure.Services.Interface;
 using Masuit.MyBlogs.Core.Models.Entity;
 using Microsoft.AspNetCore.Mvc;
-using System;
-using System.Linq;
+using System.ComponentModel.DataAnnotations;
+using System.Threading.Tasks;
 
 namespace Masuit.MyBlogs.Core.Controllers
 {
     /// <summary>
-    /// 捐赠管理
+    /// 打赏管理
     /// </summary>
     public class DonateController : AdminController
     {
@@ -17,25 +18,15 @@ namespace Masuit.MyBlogs.Core.Controllers
         public IDonateService DonateService { get; set; }
 
         /// <summary>
-        /// 捐赠管理
-        /// </summary>
-        /// <param name="donateService"></param>
-        public DonateController(IDonateService donateService)
-        {
-            DonateService = donateService;
-        }
-
-        /// <summary>
         /// 分页数据
         /// </summary>
         /// <param name="page"></param>
         /// <param name="size"></param>
         /// <returns></returns>
-        public ActionResult GetPageData(int page = 1, int size = 10)
+        public ActionResult GetPageData([Range(1, int.MaxValue, ErrorMessage = "页码必须大于0")]int page = 1, [Range(1, 50, ErrorMessage = "页大小必须在0到50之间")]int size = 15)
         {
-            var list = DonateService.LoadPageEntitiesFromL2CacheNoTracking(page, size, out int total, d => true, d => d.DonateTime, false).ToList();
-            var pageCount = Math.Ceiling(total * 1.0 / size).ToInt32();
-            return PageResult(list, pageCount, total);
+            var list = DonateService.GetPages(page, size, d => true, d => d.DonateTime, false);
+            return Ok(list);
         }
 
         /// <summary>
@@ -43,9 +34,9 @@ namespace Masuit.MyBlogs.Core.Controllers
         /// </summary>
         /// <param name="id"></param>
         /// <returns></returns>
-        public ActionResult Get(int id)
+        public async Task<ActionResult> Get(int id)
         {
-            Donate donate = DonateService.GetById(id);
+            Donate donate = await DonateService.GetByIdAsync(id) ?? throw new NotFoundException("条目不存在！");
             return ResultData(donate);
         }
 
@@ -54,26 +45,9 @@ namespace Masuit.MyBlogs.Core.Controllers
         /// </summary>
         /// <param name="donate"></param>
         /// <returns></returns>
-        public ActionResult Save(Donate donate)
+        public async Task<ActionResult> Save(Donate donate)
         {
-            var entry = DonateService.GetById(donate.Id);
-            bool b;
-            if (entry is null)
-            {
-                b = DonateService.AddEntitySaved(donate) != null;
-            }
-            else
-            {
-                entry.NickName = donate.NickName;
-                entry.Amount = donate.Amount;
-                entry.DonateTime = donate.DonateTime;
-                entry.Email = donate.Email;
-                entry.EmailDisplay = donate.EmailDisplay;
-                entry.QQorWechat = donate.QQorWechat;
-                entry.QQorWechatDisplay = donate.QQorWechatDisplay;
-                entry.Via = donate.Via;
-                b = DonateService.UpdateEntitySaved(entry);
-            }
+            var b = await DonateService.AddOrUpdateSavedAsync(d => d.Id, donate) > 0;
             return ResultData(null, b, b ? "保存成功！" : "保存失败！");
         }
 

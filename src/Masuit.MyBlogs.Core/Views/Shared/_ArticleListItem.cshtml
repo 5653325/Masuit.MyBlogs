@@ -1,17 +1,12 @@
-﻿@using System.IO
-@using System.Text.RegularExpressions
-@using System.Web
-@using Common
-@using Masuit.MyBlogs.Core.Models.Enum
+﻿@using Masuit.MyBlogs.Core.Common
 @using Masuit.Tools.Html
-@using Masuit.Tools.Win32
 @{
     string[] colors = { "success", "info", "primary", "warning", "danger", "default", "primary" };
 }
-@model Masuit.MyBlogs.Core.Models.DTO.PostOutputDto
+@model Masuit.MyBlogs.Core.Models.DTO.PostDto
 <div class="ibox wow fadeIn">
     <div class="ibox-content">
-        <a href="/@Model.Id" target="_blank">
+        <a asp-controller="Post" asp-action="Details" asp-route-id="@Model.Id" target="_blank">
             <h4>
                 @if (Model.IsFixedTop)
                 {
@@ -26,56 +21,47 @@
         </a>
         <div class="row padding-bot10">
             @{
-                //随机取合适大小的图片
-                string imgSrc = Model.Content.MatchRandomImgSrc();
-                MatchCollection imgTags = Model.Content.MatchImgTags();
-                for (var i = 0; i < imgTags.Count; i++)
-                {
-                    string src = Model.Content.MatchRandomImgSrc();
-                    if (File.Exists(AppContext.BaseDirectory + "wwwroot" + src) && !src.StartsWith("http"))
-                    {
-                        var fileInfo = new FileInfo(AppContext.BaseDirectory + "wwwroot" + src);
-                        if (fileInfo.Length > 5000 && fileInfo.Length < 100000)
-                        {
-                            imgSrc = src;
-                            break;
-                        }
-                    }
-                }
+                //取第一张图片
+                string imgSrc = Model.Content.MatchFirstImgSrc();
                 if (!string.IsNullOrEmpty(imgSrc))
                 {
-                    <div class="col-md-3">
-                        <img class="img-thumbnail img-responsive thumb" data-original="@imgSrc.Replace("/large/", "/thumb150/")" alt="@CommonHelper.SystemSettings["Title"]" title="@CommonHelper.SystemSettings["Title"] ">
+                    <div class="col-md-2 paddingright-clear hidden-xs">
+                        <img class="img-thumbnail img-responsive thumb" data-original="@imgSrc" alt="@CommonHelper.SystemSettings["Title"]" title="@CommonHelper.SystemSettings["Title"] ">
                     </div>
                 }
             }
-            <div class="col-md-@(string.IsNullOrEmpty(imgSrc) ? 12 : 9)">
+            <div class="col-md-@(string.IsNullOrEmpty(imgSrc) ? 12 : 10)">
                 <div class="small padding-bot10">
-                    作者：<i class="icon-user-check"></i><strong class="label label-primary">@Model.Author</strong> <span class="text-muted">
-                        | 发表时间：<i class="fa fa-clock-o"></i> @Model.ModifyDate.ToString("yyyy-MM-dd HH:mm") | 分类：<i class="icon-map-pin"></i>@Html.ActionLink(Model.CategoryName, "Category", "Home", new { id = Model.CategoryId }, null)
+                    作者：<i class="icon-user-check"></i>
+                    <strong class="label label-primary">
+                        <a asp-controller="Home" asp-action="Author" asp-route-author="@(Model.Modifier??Model.Author)">@(Model.Modifier??Model.Author)</a>
+                    </strong>
+                    <span class="text-muted">
+                        | 发表时间：<i class="fa fa-clock-o"></i> @Model.ModifyDate.ToString("yyyy-MM-dd HH:mm") | 分类：<i class="icon-map-pin"></i>
+                        <a asp-controller="Home" asp-action="Category" asp-route-id="@Model.CategoryId">@Model.CategoryName</a>
                     </span>
                 </div>
                 <p>
-                    @Model.Content.RemoveHtmlTag(150) ...
+                    @Html.Raw(Model.Content.GetSummary(150, 50))
                 </p>
             </div>
-
         </div>
         <div class="row">
             @if (!string.IsNullOrEmpty(Model.Label))
             {
+                var tags = Model.Label.Split(',', '，');
                 <div class="col-md-6">
-                    @foreach (string s in Model.Label.Split(',', '，'))
+                    @for (var i = 0; i < tags.Length; i++)
                     {
-                        <a href="/tag/@HttpUtility.UrlEncode(s)" target="_blank">
-                            <span class="label label-@colors[new Random().StrictNext() % colors.Length]">@s</span>
+                        <a asp-controller="Home" asp-action="Tag" asp-route-id="@tags[i]" target="_blank">
+                            <span class="label label-@colors[i]">@tags[i]</span>
                         </a>
                     }
                 </div>
             }
             <div class="col-md-6 pull-right">
                 <div class="small text-right">
-                    <i class="fa fa-comments-o"></i>@Model.Comment.Count(c => c.Status == Status.Pended) 评论 |
+                    <i class="fa fa-comments-o"></i>@Model.CommentCount 评论 |
                     <i class="fa fa-eye"></i>@Model.TotalViewCount 浏览 |
                     <i class="icon-thumbsup"></i>@Model.VoteUpCount 支持
                 </div>

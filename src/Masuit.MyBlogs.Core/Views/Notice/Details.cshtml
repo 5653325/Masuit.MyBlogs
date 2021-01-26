@@ -1,8 +1,8 @@
-﻿@using System.Text.RegularExpressions
-@using Common
+﻿@using Masuit.MyBlogs.Core.Common
 @using Masuit.MyBlogs.Core.Models.DTO
+@using Masuit.MyBlogs.Core.Models.Entity
 @using Masuit.MyBlogs.Core.Models.ViewModel
-@using Masuit.MyBlogs.Core.Extensions
+@using Masuit.Tools.Core.Net
 @model Masuit.MyBlogs.Core.Models.Entity.Notice
 @{
     ViewBag.Title = Model.Title;
@@ -31,8 +31,8 @@
     }
 </style>
 <ol class="cd-breadcrumb triangle">
-    <li>@Html.ActionLink("首页", "Index", "Home")</li>
-    <li>@Html.ActionLink("公告列表", "Index", "Notice")</li>
+    <li><a asp-controller="Home" asp-action="Index">首页</a></li>
+    <li><a asp-controller="Notice" asp-action="Index">公告列表</a></li>
     <li class="current"><em>@ViewBag.Title</em></li>
 </ol>
 <div class="bg-title">
@@ -52,12 +52,12 @@
             <div class="ibox-content">
                 <section class="wow fadeInUp">
                     <div class="btn-group">
-                        @Html.ActionLink("<<返回公告列表页", "Index", "Notice", null, new { @class = "btn btn-info" })
+                        <a asp-controller="Notice" asp-action="Index">&lt;&lt;返回公告列表页</a>
                         @{
-                            UserInfoOutputDto user = Context.Session.GetByRedis<UserInfoOutputDto>(SessionKey.UserInfo) ?? new UserInfoOutputDto();
+                            var user = Context.Session.Get<UserInfoDto>(SessionKey.UserInfo) ?? new UserInfoDto();
                             if (user.IsAdmin)
                             {
-                                <a class="btn btn-primary" href="/dashboard#/notice/index?id=@Model.Id" target="_blank">修改</a>
+                                <a class="btn btn-primary" asp-controller="Dashboard" asp-action="Index" asp-fragment="/notice/index?id=@Model.Id" target="_blank">修改</a>
                             }
                         }
                     </div>
@@ -66,53 +66,14 @@
                 <main>
                     <section>
                         <article class="article" id="article">
-                            @Html.Raw(Regex.Replace(Model.Content, @"<img\s+[^>]*\s*src\s*=\s*['""]?(\S+\.\w{3,4})['""]?[^/>]*/>", $"<img data-original=\"$1\" alt='{CommonHelper.SystemSettings["Title"]}' title='{CommonHelper.SystemSettings["Title"]}'/>"))
+                            @Html.Raw(Model.Content.ReplaceImgAttribute(Model.Title))
                         </article>
                     </section>
                 </main>
-                <!--PC和WAP自适应版-->
-                <div id="SOHUCS" sid="about/@Model.Id"></div>
-                <script type="text/javascript">
-                    (function () {
-                        var appid = 'cytsT3QgK';
-                        var conf = 'prod_0358240040a6c9611add9de991099d42';
-                        var width = window.innerWidth || document.documentElement.clientWidth;
-                        if (width < 960) {
-                            window.document.write(
-                                '<script id="changyan_mobile_js" charset="utf-8" type="text/javascript" src="https://changyan.sohu.com/upload/mobile/wap-js/changyan_mobile.js?client_id=' +
-                                appid + '&conf=' + conf + '"><\/script>');
-                        } else {
-                            var loadJs = function (d, a) {
-                                var c = document.getElementsByTagName("head")[0] || document.head || document.documentElement;
-                                var b = document.createElement("script");
-                                b.setAttribute("type", "text/javascript");
-                                b.setAttribute("charset", "UTF-8");
-                                b.setAttribute("src", d);
-                                if (typeof a === "function") {
-                                    if (window.attachEvent) {
-                                        b.onreadystatechange = function () {
-                                            var e = b.readyState;
-                                            if (e === "loaded" || e === "complete") {
-                                                b.onreadystatechange = null;
-                                                a()
-                                            }
-                                        }
-                                    } else {
-                                        b.onload = a
-                                    }
-                                }
-                                c.appendChild(b)
-                            };
-                            loadJs("https://changyan.sohu.com/upload/changyan.js", function () {
-                                window.changyan.api.config({
-                                    appid: appid,
-                                    conf: conf
-                                })
-                            });
-                        }
-                    })();
-                </script>
             </div>
         </div>
     </div>
+    @{
+        await Html.RenderPartialAsync("_ArticleListAdvertisement", (Advertisement)ViewBag.Ads);
+    }
 </div>

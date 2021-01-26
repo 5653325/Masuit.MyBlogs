@@ -1,12 +1,16 @@
-﻿@using AngleSharp.Network.Default
-@using Masuit.MyBlogs.Core.Models.DTO
+﻿@using Masuit.MyBlogs.Core.Models.DTO
+@using Masuit.MyBlogs.Core.Models.Entity
 @using Masuit.MyBlogs.Core.Models.ViewModel
-@using Masuit.MyBlogs.Core.Extensions
-@model IList<Masuit.MyBlogs.Core.Models.DTO.PostOutputDto>
+@using Masuit.Tools.Core.Net
+@using Masuit.MyBlogs.Core.Models
+@using Masuit.Tools.Systems
+@model Masuit.Tools.Models.PagedList<Masuit.MyBlogs.Core.Models.DTO.PostDto>
 @{
     Layout = "~/Views/Shared/_Layout.cshtml";
     Random r = new Random();
-    UserInfoOutputDto user = Context.Session.GetByRedis<UserInfoOutputDto>(SessionKey.UserInfo) ?? new UserInfoOutputDto();
+    UserInfoDto user = Context.Session.Get<UserInfoDto>(SessionKey.UserInfo) ?? new UserInfoDto();
+    Advertisement ad = ViewBag.Ads;
+    Pagination page = ViewData["page"] as Pagination;
 }
 <style>
     .bg-title {
@@ -33,7 +37,7 @@
 </style>
 <div class="container">
     <ol class="cd-breadcrumb triangle">
-        <li>@Html.ActionLink("首页", "Index", "Home")</li>
+        <li><a asp-controller="Home" asp-action="Index">首页</a></li>
         <li class="current"><em>专题_@ViewBag.Title</em></li>
     </ol>
 </div>
@@ -62,49 +66,51 @@
         </div>
     </div>
     <div class="wrapper-content  animated bounceInUp blog">
-        @if (Model.Any())
+        @if (Model.Data.Any())
         {
-            <div class="orderby">
-                <div class="row">
-                    <div class="col-md-offset-10 col-md-2">
-                        <div class="btn-group pull-right">
-                            @Html.ActionLink("所有专题", "All", "Post", null, new { @class = "btn btn-info" })
-                            <button type="button" class="btn btn-default dropdown-toggle" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
-                                排序方式<span class="caret"></span>
-                            </button>
-                            <ul class="dropdown-menu">
-                                <li>
-                                    <a href="@Context.Request.Path">最后修改日期</a>
-                                </li>
-                                <li>
-                                    <a href="@Context.Request.Path?orderby=0">最后发表日期</a>
-                                </li>
-                                <li role="separator" class="divider"></li>
-                                <li>
-                                    <a href="@Context.Request.Path?orderby=3">评论最多</a>
-                                </li>
-                                <li>
-                                    <a href="@Context.Request.Path?orderby=2">访问量最多</a>
-                                </li>
-                                <li>
-                                    <a href="@Context.Request.Path?orderby=4">支持最多</a>
-                                </li>
-                            </ul>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            foreach (PostOutputDto post in Model)
+            var rnd = new Random().Next(Model.CurrentCount > 2 ? 2 : 0, Model.CurrentCount);
+            for (var i = 0; i < Model.CurrentCount; i++)
             {
+                if (rnd > 2 && rnd == i && ad != null)
+                {
+                    await Html.RenderPartialAsync("_ArticleListAdvertisement", ad);
+                }
+
+                var post = Model.Data[i];
                 await Html.RenderPartialAsync(user.IsAdmin ? "_ArticleListItem_Admin" : "_ArticleListItem", post);
             }
         }
         else
         {
-            <h3>Oops！抱歉~本专题没有收录相关的文章或资源！如果您有相关的结果，您可以 @Html.ActionLink("点击这里", "Publish", "Post", null, new { @class = "btn btn-info btn-lg" }) 投稿哦！</h3>
+            <h3>Oops！抱歉~本专题没有收录相关的文章或资源！如果您有相关的结果，您可以 <a asp-controller="Post" asp-action="Publish" class="btn btn-info btn-lg">点击这里</a> 投稿哦！</h3>
         }
-        <div class="col-md-12 text-center">
-            @{ await Html.RenderPartialAsync("_Pagination"); }
+        <div class="pull-left">
+            @{ await Html.RenderPartialAsync("_Pagination", page); }
+        </div>
+        <div class="btn-group pull-right dropup">
+            <a asp-controller="Post" asp-action="All" class="btn btn-info">所有专题</a>
+            <button type="button" class="btn btn-default dropdown-toggle" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+                @(page.OrderBy?.GetDescription()??"排序方式")
+                <span class="caret"></span>
+            </button>
+            <ul class="dropdown-menu">
+                <li>
+                    <a href="@Context.Request.Path">最后修改日期</a>
+                </li>
+                <li>
+                    <a href="@Context.Request.Path?orderby=0">最后发表日期</a>
+                </li>
+                <li role="separator" class="divider"></li>
+                <li>
+                    <a href="@Context.Request.Path?orderby=3">评论最多</a>
+                </li>
+                <li>
+                    <a href="@Context.Request.Path?orderby=2">访问量最多</a>
+                </li>
+                <li>
+                    <a href="@Context.Request.Path?orderby=4">支持最多</a>
+                </li>
+            </ul>
         </div>
     </div>
 </div>

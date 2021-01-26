@@ -1,19 +1,22 @@
-﻿using Masuit.MyBlogs.Core.Configs;
-using Masuit.Tools.Models;
-using Microsoft.AspNetCore.Mvc;
-using Microsoft.Net.Http.Headers;
-using Newtonsoft.Json;
-using Quartz;
-using Quartz.Spi;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Net.Http;
-using System.Threading.Tasks;
+﻿using Masuit.MyBlogs.Core.Common;
+using Masuit.MyBlogs.Core.Configs;
+using Masuit.Tools;
 using Masuit.Tools.Core.Net;
+using Masuit.Tools.Core.Validator;
+using Masuit.Tools.Models;
+using MaxMind.GeoIP2.Exceptions;
+using MaxMind.GeoIP2.Responses;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
+using Newtonsoft.Json;
+using Polly;
+using System;
+using System.Net.Http;
+using System.Threading;
+using System.Threading.Tasks;
+using TimeZoneConverter;
 
 #if DEBUG
-using Masuit.Tools.Win32;
 #endif
 
 namespace Masuit.MyBlogs.Core.Controllers
@@ -24,25 +27,58 @@ namespace Masuit.MyBlogs.Core.Controllers
     [Route("tools")]
     public class ToolsController : BaseController
     {
+        private readonly HttpClient _httpClient;
+
+        public ToolsController(IHttpClientFactory httpClientFactory)
+        {
+            _httpClient = httpClientFactory.CreateClient();
+        }
+
         /// <summary>
         /// 获取ip地址详细信息
         /// </summary>
         /// <param name="ip"></param>
         /// <returns></returns>
-        [HttpGet, Route("ip/{ip?}"), ResponseCache(Duration = 600, VaryByQueryKeys = new[] { "ip" }, VaryByHeader = HeaderNames.Cookie)]
-        public async Task<ActionResult> GetIpInfo(string ip)
+        [Route("ip/{ip?}"), ResponseCache(Duration = 600, VaryByQueryKeys = new[] { "ip" }, VaryByHeader = "Cookie")]
+        public async Task<ActionResult> GetIpInfo([IsIPAddress] string ip)
         {
             if (string.IsNullOrEmpty(ip))
             {
-                ip = HttpContext.Connection.RemoteIpAddress.MapToIPv4().ToString();
+                ip = ClientIP;
             }
-            ViewBag.IP = ip;
-            PhysicsAddress address = await ip.GetPhysicsAddressInfo();
-            if (Request.Method.ToLower().Equals("get"))
+
+            if (ip.IsPrivateIP())
             {
-                return View(address);
+                return Ok("内网IP");
             }
-            return Json(address);
+
+            ViewBag.IP = ip;
+            var location = Policy<CityResponse>.Handle<AddressNotFoundException>().Fallback(() => new CityResponse()).Execute(() => CommonHelper.MaxmindReader.City(ip));
+            var asn = ip.GetIPAsn();
+            var address = await ip.GetPhysicsAddressInfo() ?? new PhysicsAddress()
+            {
+                Status = 0,
+                AddressResult = new AddressResult()
+                {
+                    AddressComponent = new AddressComponent(),
+                    FormattedAddress = ip.GetIPLocation(),
+                    Location = new Location()
+                    {
+                        Lng = location.Location.Longitude ?? 0,
+                        Lat = location.Location.Latitude ?? 0
+                    }
+                }
+            };
+            address.AddressResult.Pois.Add(new Pois
+            {
+                AddressDetail = $"{ip.GetIPLocation()}（UTC{TZConvert.GetTimeZoneInfo(location.Location.TimeZone ?? "Asia/Shanghai").BaseUtcOffset.Hours:+#;-#;0}，本地数据库）"
+            });
+            if (Request.Method.Equals(HttpMethods.Get))
+            {
+                return View((address, asn));
+            }
+
+            return Json(new { address, asn });
         }
 
         /// <summary>
@@ -51,28 +87,45 @@ namespace Masuit.MyBlogs.Core.Controllers
         /// <param name="lat"></param>
         /// <param name="lng"></param>
         /// <returns></returns>
-        [HttpGet, Route("pos"), ResponseCache(Duration = 600, VaryByQueryKeys = new[] { "lat", "lng" }, VaryByHeader = HeaderNames.Cookie)]
+        [HttpGet("pos"), ResponseCache(Duration = 600, VaryByQueryKeys = new[] { "lat", "lng" }, VaryByHeader = "Cookie")]
         public async Task<ActionResult> Position(string lat, string lng)
         {
             if (string.IsNullOrEmpty(lat) || string.IsNullOrEmpty(lng))
             {
-                var ip = HttpContext.Connection.RemoteIpAddress.MapToIPv4().ToString();
+                var ip = ClientIP;
 #if DEBUG
-                Random r = new Random();
-                ip = $"{r.StrictNext(210)}.{r.StrictNext(255)}.{r.StrictNext(255)}.{r.StrictNext(255)}";
+                var r = new Random();
+                ip = $"{r.Next(210)}.{r.Next(255)}.{r.Next(255)}.{r.Next(255)}";
 #endif
-                PhysicsAddress address = await ip.GetPhysicsAddressInfo();
+                var location = Policy<CityResponse>.Handle<AddressNotFoundException>().Fallback(() => new CityResponse()).Execute(() => CommonHelper.MaxmindReader.City(ip));
+                var address = await ip.GetPhysicsAddressInfo() ?? new PhysicsAddress()
+                {
+                    Status = 0,
+                    AddressResult = new AddressResult()
+                    {
+                        AddressComponent = new AddressComponent(),
+                        FormattedAddress = ip.GetIPLocation(),
+                        Location = new Location()
+                        {
+                            Lng = location.Location.Longitude ?? 0,
+                            Lat = location.Location.Latitude ?? 0
+                        }
+                    }
+                };
                 return View(address);
             }
-            using (HttpClient client = new HttpClient()
-            {
-                BaseAddress = new Uri("http://api.map.baidu.com")
-            })
-            {
-                var s = await client.GetStringAsync($"/geocoder/v2/?location={lat},{lng}&output=json&pois=1&ak={AppConfig.BaiduAK}");
-                PhysicsAddress physicsAddress = JsonConvert.DeserializeObject<PhysicsAddress>(s);
-                return View(physicsAddress);
-            }
+
+            var s = await _httpClient.GetStringAsync($"http://api.map.baidu.com/geocoder/v2/?location={lat},{lng}&output=json&pois=1&ak={AppConfig.BaiduAK}", new CancellationTokenSource(TimeSpan.FromSeconds(10)).Token).ContinueWith(t =>
+             {
+                 if (t.IsCompletedSuccessfully)
+                 {
+                     return JsonConvert.DeserializeObject<PhysicsAddress>(t.Result);
+                 }
+
+                 return new PhysicsAddress();
+             });
+
+            return View(s);
         }
 
         /// <summary>
@@ -80,82 +133,56 @@ namespace Masuit.MyBlogs.Core.Controllers
         /// </summary>
         /// <param name="addr"></param>
         /// <returns></returns>
-        [HttpGet, Route("addr"), ResponseCache(Duration = 600, VaryByQueryKeys = new[] { "addr" }, VaryByHeader = HeaderNames.Cookie)]
+        [Route("addr"), ResponseCache(Duration = 600, VaryByQueryKeys = new[] { "addr" }, VaryByHeader = "Cookie")]
         public async Task<ActionResult> Address(string addr)
         {
             if (string.IsNullOrEmpty(addr))
             {
-                var ip = HttpContext.Connection.RemoteIpAddress.MapToIPv4().ToString();
+                var ip = ClientIP;
 #if DEBUG
                 Random r = new Random();
-                ip = $"{r.StrictNext(210)}.{r.StrictNext(255)}.{r.StrictNext(255)}.{r.StrictNext(255)}";
+                ip = $"{r.Next(210)}.{r.Next(255)}.{r.Next(255)}.{r.Next(255)}";
 #endif
-                PhysicsAddress address = await ip.GetPhysicsAddressInfo();
-                if (address?.Status == 0)
+                var location = Policy<CityResponse>.Handle<AddressNotFoundException>().Fallback(() => new CityResponse()).Execute(() => CommonHelper.MaxmindReader.City(ip));
+                var address = await ip.GetPhysicsAddressInfo() ?? new PhysicsAddress()
                 {
-                    ViewBag.Address = address.AddressResult.FormattedAddress;
-                    if (Request.Method.ToLower().Equals("get"))
+                    Status = 0,
+                    AddressResult = new AddressResult()
                     {
-                        return View(address.AddressResult.Location);
+                        AddressComponent = new AddressComponent(),
+                        FormattedAddress = ip.GetIPLocation(),
+                        Location = new Location()
+                        {
+                            Lng = location.Location.Longitude ?? 0,
+                            Lat = location.Location.Latitude ?? 0
+                        }
                     }
-                    return Json(address.AddressResult.Location);
+                };
+                ViewBag.Address = address.AddressResult.FormattedAddress;
+                if (Request.Method.Equals(HttpMethods.Get))
+                {
+                    return View(address.AddressResult.Location);
                 }
+
+                return Json(address.AddressResult.Location);
             }
+
             ViewBag.Address = addr;
-            using (HttpClient client = new HttpClient()
-            {
-                BaseAddress = new Uri("http://api.map.baidu.com")
-            })
-            {
-                var s = await client.GetStringAsync($"/geocoder/v2/?output=json&address={addr}&ak={AppConfig.BaiduAK}");
-                var physicsAddress = JsonConvert.DeserializeAnonymousType(s, new
-                {
-                    status = 0,
-                    result = new
-                    {
-                        location = new Location()
-                    }
-                });
-                if (Request.Method.ToLower().Equals("get"))
-                {
-                    return View(physicsAddress.result.location);
-                }
-                return Json(physicsAddress.result.location);
-            }
-        }
+            var physicsAddress = await _httpClient.GetStringAsync($"http://api.map.baidu.com/geocoder/v2/?output=json&address={addr}&ak={AppConfig.BaiduAK}", new CancellationTokenSource(TimeSpan.FromSeconds(10)).Token).ContinueWith(t =>
+             {
+                 if (t.IsCompletedSuccessfully)
+                 {
+                     return JsonConvert.DeserializeObject<PhysicsAddress>(t.Result);
+                 }
 
-        /// <summary>
-        /// corn表达式生成
-        /// </summary>
-        /// <returns></returns>
-        [HttpGet("cron"), ResponseCache(Duration = 600, VaryByHeader = HeaderNames.Cookie)]
-        public ActionResult Cron()
-        {
-            return View();
-        }
+                 return new PhysicsAddress();
+             });
+            if (Request.Method.Equals(HttpMethods.Get))
+            {
+                return View(physicsAddress?.AddressResult?.Location);
+            }
 
-        /// <summary>
-        /// corn表达式
-        /// </summary>
-        /// <param name="cron"></param>
-        /// <returns></returns>
-        [HttpPost("cron"), ResponseCache(Duration = 600, VaryByQueryKeys = new[] { "cron" }, VaryByHeader = HeaderNames.Cookie)]
-        public ActionResult Cron(string cron)
-        {
-            //时间表达式
-            ITrigger trigger = TriggerBuilder.Create().WithCronSchedule(cron).Build();
-            var dates = TriggerUtils.ComputeFireTimes(trigger as IOperableTrigger, null, 5);
-            List<string> list = new List<string>();
-            foreach (DateTimeOffset dtf in dates)
-            {
-                list.Add(TimeZoneInfo.ConvertTimeFromUtc(dtf.DateTime, TimeZoneInfo.Local).ToString());
-            }
-            if (list.Any())
-            {
-                return ResultData(list);
-            }
-            list.Add($"{cron} 不是合法的cron表达式");
-            return ResultData(list);
+            return Json(physicsAddress?.AddressResult?.Location);
         }
     }
 }

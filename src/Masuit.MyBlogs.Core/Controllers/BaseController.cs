@@ -1,30 +1,30 @@
-﻿using Masuit.MyBlogs.Core.Configs;
+﻿using AutoMapper;
+using Masuit.MyBlogs.Core.Common;
+using Masuit.MyBlogs.Core.Configs;
 using Masuit.MyBlogs.Core.Extensions;
+using Masuit.MyBlogs.Core.Extensions.Firewall;
 using Masuit.MyBlogs.Core.Infrastructure.Services.Interface;
 using Masuit.MyBlogs.Core.Models.DTO;
 using Masuit.MyBlogs.Core.Models.Enum;
 using Masuit.MyBlogs.Core.Models.ViewModel;
+using Masuit.Tools;
+using Masuit.Tools.Core.Net;
 using Masuit.Tools.Security;
+using Masuit.Tools.Strings;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Filters;
-using Newtonsoft.Json;
 using System;
-using System.Collections.Generic;
 using System.Linq;
 using System.Net;
-using System.Text;
-
-#if DEBUG
-using Common;
-#endif
+using System.Text.RegularExpressions;
 
 namespace Masuit.MyBlogs.Core.Controllers
 {
     /// <summary>
     /// 基本父控制器
     /// </summary>
-    [ApiExplorerSettings(IgnoreApi = true)]
+    [ApiExplorerSettings(IgnoreApi = true), ServiceFilter(typeof(FirewallAttribute))]
     public class BaseController : Controller
     {
         /// <summary>
@@ -42,6 +42,25 @@ namespace Masuit.MyBlogs.Core.Controllers
         /// </summary>
         public ILinksService LinksService { get; set; }
 
+        public IAdvertisementService AdsService { get; set; }
+        public IVariablesService VariablesService { get; set; }
+
+        public UserInfoDto CurrentUser => HttpContext.Session.Get<UserInfoDto>(SessionKey.UserInfo) ?? new UserInfoDto();
+
+        /// <summary>
+        /// 客户端的真实IP
+        /// </summary>
+        public string ClientIP => HttpContext.Connection.RemoteIpAddress.ToString();
+
+        /// <summary>
+        /// 普通访客是否token合法
+        /// </summary>
+        public bool VisitorTokenValid => Request.Cookies["Email"].MDString3(AppConfig.BaiduAK).Equals(Request.Cookies["FullAccessToken"]);
+
+
+        public IMapper Mapper { get; set; }
+        public MapperConfiguration MapperConfig { get; set; }
+
         /// <summary>
         /// 响应数据
         /// </summary>
@@ -51,36 +70,39 @@ namespace Masuit.MyBlogs.Core.Controllers
         /// <param name="isLogin">登录状态</param>
         /// <param name="code">http响应码</param>
         /// <returns></returns>
-        public ContentResult ResultData(object data, bool success = true, string message = "", bool isLogin = true, HttpStatusCode code = HttpStatusCode.OK)
+        public ActionResult ResultData(object data, bool success = true, string message = "", bool isLogin = true, HttpStatusCode code = HttpStatusCode.OK)
         {
-            return Content(JsonConvert.SerializeObject(new
+            return Ok(new
             {
                 IsLogin = isLogin,
                 Success = success,
                 Message = message,
                 Data = data,
                 code
-            }, new JsonSerializerSettings
-            {
-                MissingMemberHandling = MissingMemberHandling.Ignore,
-                NullValueHandling = NullValueHandling.Ignore,
-                ReferenceLoopHandling = ReferenceLoopHandling.Ignore
-            }), "application/json", Encoding.UTF8);
+            });
         }
 
-        /// <summary>
-        /// 分页响应数据
-        /// </summary>
-        /// <param name="data">数据</param>
-        /// <param name="pageCount">总页数</param>
-        /// <param name="total">总条数</param>
-        /// <returns></returns>
-        public ContentResult PageResult(object data, int pageCount, int total)
+        protected string ReplaceVariables(string text)
         {
-            return Content(JsonConvert.SerializeObject(new PageDataModel(data, pageCount, total), new JsonSerializerSettings
+            if (string.IsNullOrEmpty(text))
             {
-                MissingMemberHandling = MissingMemberHandling.Ignore
-            }), "application/json", Encoding.UTF8);
+                return text;
+            }
+
+            var keys = Regex.Matches(text, @"\{\{[\w._-]+\}\}").Select(m => m.Value).Join(",");
+            if (!string.IsNullOrEmpty(keys))
+            {
+                var dic = VariablesService.GetQueryFromCache(v => keys.Contains(v.Key)).ToDictionary(v => v.Key, v => v.Value);
+                var template = Template.Create(text);
+                foreach (var (key, value) in dic)
+                {
+                    template.Set(key, value);
+                }
+
+                return template.Render();
+            }
+
+            return text;
         }
 
         /// <summary>在调用操作方法前调用。</summary>
@@ -88,69 +110,70 @@ namespace Masuit.MyBlogs.Core.Controllers
         public override void OnActionExecuting(ActionExecutingContext filterContext)
         {
             base.OnActionExecuting(filterContext);
-            if (filterContext.HttpContext.Request.Method.Equals("GET", StringComparison.InvariantCultureIgnoreCase)) //get方式的多半是页面
-            {
-                UserInfoOutputDto user = filterContext.HttpContext.Session.GetByRedis<UserInfoOutputDto>(SessionKey.UserInfo);
+            ViewBag.Desc = CommonHelper.SystemSettings["Description"];
+            var user = filterContext.HttpContext.Session.Get<UserInfoDto>(SessionKey.UserInfo);
 #if DEBUG
-                user = UserInfoService.GetByUsername("masuit").Mapper<UserInfoOutputDto>();
-                filterContext.HttpContext.Session.SetByRedis(SessionKey.UserInfo, user);
+            user = UserInfoService.GetByUsername("masuit").Mapper<UserInfoDto>();
+            filterContext.HttpContext.Session.Set(SessionKey.UserInfo, user);
 #endif
-                if (user == null && Request.Cookies.Count > 2) //执行自动登录
-                {
-                    string name = Request.Cookies["username"];
-                    string pwd = Request.Cookies["password"]?.DesDecrypt(AppConfig.BaiduAK);
-                    var userInfo = UserInfoService.Login(name, pwd);
-                    if (userInfo != null)
-                    {
-                        Response.Cookies.Append("username", name, new CookieOptions
-                        {
-                            Expires = DateTime.Now.AddDays(7)
-                        });
-                        Response.Cookies.Append("password", Request.Cookies["password"], new CookieOptions
-                        {
-                            Expires = DateTime.Now.AddDays(7)
-                        });
-                        filterContext.HttpContext.Session.SetByRedis(SessionKey.UserInfo, userInfo);
-                    }
-                }
-            }
-            else
+            if (CommonHelper.SystemSettings.GetOrAdd("CloseSite", "false") == "true" && user?.IsAdmin != true)
             {
-                if (ModelState.IsValid) return;
-                List<string> errmsgs = new List<string>();
-                ModelState.ForEach(kv => kv.Value.Errors.ForEach(error => errmsgs.Add(error.ErrorMessage)));
-                if (errmsgs.Count > 1)
-                {
-                    for (var i = 0; i < errmsgs.Count; i++)
-                    {
-                        errmsgs[i] = i + 1 + ". " + errmsgs[i];
-                    }
-                }
-                filterContext.Result = ResultData(errmsgs, false, "数据校验失败，错误信息：" + string.Join(" | ", errmsgs), true, HttpStatusCode.BadRequest);
+                filterContext.Result = RedirectToAction("ComingSoon", "Error");
             }
+
+            if (Request.Method == HttpMethods.Post && !Request.Path.Value.Contains("get", StringComparison.InvariantCultureIgnoreCase) && CommonHelper.SystemSettings.GetOrAdd("DataReadonly", "false") == "true" && !filterContext.Filters.Any(m => m.ToString().Contains(nameof(MyAuthorizeAttribute))))
+            {
+                filterContext.Result = ResultData("网站当前处于数据写保护状态，无法提交任何数据，如有疑问请联系网站管理员！", false, "网站当前处于数据写保护状态，无法提交任何数据，如有疑问请联系网站管理员！", user != null, HttpStatusCode.BadRequest);
+            }
+
+            if (user == null && Request.Cookies.Any(x => x.Key == "username" || x.Key == "password")) //执行自动登录
+            {
+                string name = Request.Cookies["username"];
+                string pwd = Request.Cookies["password"]?.DesDecrypt(AppConfig.BaiduAK);
+                var userInfo = UserInfoService.Login(name, pwd);
+                if (userInfo != null)
+                {
+                    Response.Cookies.Append("username", name, new CookieOptions
+                    {
+                        Expires = DateTime.Now.AddYears(1),
+                        SameSite = SameSiteMode.Lax
+                    });
+                    Response.Cookies.Append("password", Request.Cookies["password"], new CookieOptions
+                    {
+                        Expires = DateTime.Now.AddYears(1),
+                        SameSite = SameSiteMode.Lax
+                    });
+                    filterContext.HttpContext.Session.Set(SessionKey.UserInfo, userInfo);
+                }
+            }
+
+            if (ModelState.IsValid) return;
+            var errmsgs = ModelState.SelectMany(kv => kv.Value.Errors.Select(e => e.ErrorMessage)).ToList();
+            if (errmsgs.Any())
+            {
+                for (var i = 0; i < errmsgs.Count; i++)
+                {
+                    errmsgs[i] = i + 1 + ". " + errmsgs[i];
+                }
+            }
+
+            filterContext.Result = ResultData(errmsgs, false, "数据校验失败，错误信息：" + errmsgs.Join(" | "), user != null, HttpStatusCode.BadRequest);
         }
 
         /// <summary>在调用操作方法后调用。</summary>
         /// <param name="filterContext">有关当前请求和操作的信息。</param>
         public override void OnActionExecuted(ActionExecutedContext filterContext)
         {
-            base.OnActionExecuted(filterContext);
-            if (filterContext.HttpContext.Request.Method.Equals("POST", StringComparison.InvariantCultureIgnoreCase) && filterContext.Result is ViewResult)
+            if (filterContext.Result is ViewResult)
             {
-                filterContext.Result = ResultData(null, false, "该URL仅支持Get请求方式", false, HttpStatusCode.MethodNotAllowed);
-                return;
+                ViewBag.menus = MenuService.GetQueryFromCache<MenuDto>(m => m.Status == Status.Available).OrderBy(m => m.Sort).ToList(); //菜单
+                var model = new PageFootViewModel //页脚
+                {
+                    Links = LinksService.GetQueryFromCache<LinksDto>(l => l.Status == Status.Available).OrderByDescending(l => l.Recommend).ThenByDescending(l => l.Weight).Take(30).ToList()
+                };
+                ViewBag.Footer = model;
             }
-
-            #region 准备页面数据模型
-
-            ViewBag.menus = MenuService.LoadEntitiesFromL2Cache<MenuOutputDto>(m => m.Status == Status.Available).OrderBy(m => m.Sort).ToList(); //菜单
-            PageFootViewModel model = new PageFootViewModel //页脚
-            {
-                Links = LinksService.LoadPageEntitiesFromL2Cache<bool, LinksOutputDto>(1, 40, out int _, l => l.Status == Status.Available, l => l.Recommend, false).ToList()
-            };
-            ViewBag.Footer = model;
-
-            #endregion
+            base.OnActionExecuted(filterContext);
         }
     }
 }

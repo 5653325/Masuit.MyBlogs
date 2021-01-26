@@ -1,6 +1,4 @@
 ﻿myApp.controller("menu", ["$scope", "$http", "$timeout", function($scope, $http, $timeout) {
-	window.hub.stop();
-	$scope.loading();
 	$scope.menu = {};
 	$scope.init = function() {
 		$scope.request("/menu/getmenus", null, function(data) {
@@ -160,28 +158,12 @@
 	};
 	$scope.menu = {};
 	$scope.newItem = function() {
-		//Custombox.open({
-		//	target: '#menu',
-		//	zIndex: 100,
-		//	height: 900,
-		//	close: function () {
-		//		$scope.menu = {};
-		//	},
-		//	overlayOpacity: 0.5
-		//});
 		layer.open({
 			type: 1,
 			zIndex: 20,
 			title: '修改菜单信息',
 			area: (window.screen.width > 600 ? 600 : window.screen.width) + 'px',// '340px'], //宽高
-			//area: ['600px', '260px'], //宽高
 			content: $("#modal"),
-			//cancel: function(index, layero) {
-			//	setTimeout(function() {
-			//		$("#modal").css("display", "none");
-			//	}, 500);
-			//	return true;
-			//},
 			success: function(layero, index) {
 				$scope.menu = {};
 			},
@@ -192,6 +174,7 @@
 		var nodeData = $scope.data[$scope.data.length - 1];
 		$scope.menu.Sort = nodeData.Sort + (nodeData.nodes.length + 1) * 10;
 		$scope.menu.ParentId  = 0;
+		$scope.menu.MenuType  = 0;
 	};
 	$scope.submenu = {};
 
@@ -202,28 +185,12 @@
 		}, 500);
 	}
 	$scope.newSubItem = function (scope) {
-		//Custombox.open({
-		//	target: '#menu',
-		//	zIndex: 100,
-		//	height: 900,
-		//	close: function () {
-		//		$scope.menu = {};
-		//	},
-		//	overlayOpacity:0.5
-		//});
 		layer.open({
 			type: 1,
 			zIndex: 20,
 			title: '修改菜单信息',
 			area: (window.screen.width > 600 ? 600 : window.screen.width) + 'px',// '340px'], //宽高
-			//area: ['600px', '270px'], //宽高
 			content: $("#modal"),
-			//cancel: function(index, layero) {
-			//	setTimeout(function() {
-			//		$("#modal").css("display", "none");
-			//	}, 500);
-			//	return true;
-			//},
 			success: function(layero, index) {
 				$scope.menu = {};
 			},
@@ -238,6 +205,7 @@
 			return false;
 		}
 		$scope.menu.Sort = (nodeData.Sort + nodeData.nodes.length + 1) * 10;
+		$scope.menu.MenuType  = nodeData.MenuType;
 		$scope.menu.ParentId = nodeData.Id;
 	};
 	$scope.expandAll = function() {
@@ -324,15 +292,6 @@
 			});
 		}else {
 			//添加
-			if (menu.ParentId == 0) {
-				//添加主菜单
-				var nodeData = $scope.data[$scope.data.length - 1];
-				menu.Sort = nodeData.Sort + (nodeData.nodes.length + 1) * 10;
-				$scope.data.push(menu);
-			} else {
-				//添加子菜单
-				$scope.submenu.nodes.push(menu);
-			}
 			$scope.request("/menu/save", menu, function (data) {
 				window.notie.alert({
 					type: 1,
@@ -341,62 +300,25 @@
 				});
 				$scope.menu = {};
 				$scope.closeAll();
-				//Custombox.close();
 				$scope.init();
 			});
 		}
 	}
+	$scope.uploadImage = function() {
+        $("#uploadform").ajaxSubmit({
+			url: "/Upload",
+			type: "post",
+			success: function(data) {
+				document.getElementById("uploadform").reset();
+				$scope.$apply(function () {
+			     　$scope.allowUpload=false;
+					$scope.menu.Icon = data.Data;
+			    });
+			}
+		});
+    };
 	$scope.upload = function() {
-		swal({
-			title: '请选择一张图片',
-			input: 'file',
-			showCancelButton: true,
-			showCloseButton: true,
-			confirmButtonColor: "#DD6B55",
-			confirmButtonText: "确定",
-			cancelButtonText: "取消",
-			showLoaderOnConfirm: true,
-			animation: true,
-			inputAttributes: {
-				accept: 'image/*'
-			}
-		}).then(function(file) {
-			if (file) {
-				var reader = new FileReader;
-				reader.onload = function (e) {
-					swal({
-						title: "上传预览",
-						text:"确认后将开始上传并应用设置！",
-						imageUrl: e.target.result,
-						showCancelButton: true,
-						confirmButtonColor: '#3085d6',
-						cancelButtonColor: '#d33',
-						confirmButtonText: '开始上传',
-						cancelButtonText: '取消',
-						showLoaderOnConfirm: true,
-						preConfirm: function () {
-							return new Promise(function (resolve, reject) {
-								$http.post("/upload/DecodeDataUri", {
-									data: e.target.result
-								}).then(function (res) {
-									var data = res.data;
-									if (data.Success) {
-										resolve(data.Data);
-									} else {
-										reject(data.Message);
-									}
-								}, function (error) {
-									reject("请求失败，错误码：" + error.status);
-								});
-							});
-						}
-					}).then(function (data) {
-						$scope.menu.Icon = data;
-					}).catch(swal.noop);
-				};
-				reader.readAsDataURL(file);
-			}
-		}).catch(swal.noop);
+		$scope.allowUpload=true;
 	}
 	$scope.init();
 	$scope.getMenuType();

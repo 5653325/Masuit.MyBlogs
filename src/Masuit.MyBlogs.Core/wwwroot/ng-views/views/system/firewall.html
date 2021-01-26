@@ -5,47 +5,86 @@
         min-height: 700px;
         overflow: paged-y-controls;
     }
-
-    .iplist {
-        height: 500px;
-        overflow-y: auto;
-    }
 </style>
 <div class="card">
-    <div class="card-header">
-        <h2>防火墙策略配置</h2>
-    </div>
-    <div class="card-body">
-        <div class="card-body card-padding">
-            <div class="row">
-                <div class="col-md-6">
-                    <div class="input-group">
-                        <span class="input-group-addon">启用地区限制访问策略：</span>
-                        <span class="el-switch">
-                            <input name="switch" ng-checked="Settings.EnableDenyArea=='true'" type="checkbox">
-                            <span class="el-switch-style" ng-click="EnableDenyAreaPolicy()"></span>
-                        </span>
-                    </div>
-                </div>
-                <div class="col-md-6 text-right">
-                    <div class="btn-group">
-                        <button class="btn btn-info" ng-click="getAreaIPBlackList()" ng-if="Settings.EnableDenyArea=='true'" type="button">查看地区IP黑名单</button>
-                        <button class="btn btn-danger" ng-click="getIPBlackList()" type="button">编辑全局IP黑名单</button>
-                        <button class="btn btn-success" ng-click="getIPRangeBlackList()" type="button">编辑IP地址段黑名单</button>
-                        <button class="btn btn-primary" ng-click="getIPWhiteList()" type="button">编辑IP白名单</button>
-                    </div>
+    <div class="card-header p-b-0">
+        <div class="row">
+            <div class="col-md-6">
+                <h2>防火墙策略配置</h2>
+            </div>
+            <div class="col-md-6 text-right">
+                <div class="btn-group">
+                    <button class="btn btn-danger" ng-click="getIPBlackList()" type="button">编辑全局IP黑名单</button>
+                    <button class="btn btn-success" ng-click="getIPRangeBlackList()" type="button">编辑IP地址段黑名单</button>
+                    <button class="btn btn-primary" ng-click="getIPWhiteList()" type="button">编辑IP白名单</button>
+                    <button class="btn btn-info" ng-click="save()" type="button">保存配置</button>
                 </div>
             </div>
-            <div class="input-group">
-                <span class="el-switch input-group-addon">
-                    <span>受限制的地区：</span>
-                </span>
-                <div class="fg-line">
-                    <textarea class="form-control" ng-model="Settings.DenyArea" ng-readonly="Settings.EnableDenyArea=='false'" placeholder="禁止访问的地区，逗号分隔" rows="3" type="text"></textarea>
+        </div>
+    </div>
+    <div class="card-body p-t-0">
+        <div class="card-body card-padding">
+            <div class="row">
+                <div class="col-md-12 form-inline">
+                    <div class="input-group">
+                        <span class="input-group-addon">防火墙状态：</span>
+                        <span class="el-switch">
+                            <input name="switch" ng-checked="Settings.FirewallEnabled=='true'" type="checkbox">
+                            <span class="el-switch-style" ng-click="EnableFirewall()"></span>
+                        </span>
+                    </div>
+                    <div class="input-group">
+                        <span class="input-group-addon">单IP访问频次：每</span>
+                        <div class="fg-line">
+                            <input class="form-control" ng-model="Settings.LimitIPFrequency" type="text" />
+                        </div>
+                        <span class="input-group-addon">秒内，最大请求</span>
+                        <div class="fg-line">
+                            <input class="form-control" ng-model="Settings.LimitIPRequestTimes" type="text" />
+                        </div>
+                        <span class="input-group-addon">次，冻结该IP：</span>
+                        <div class="fg-line">
+                            <input class="form-control" ng-model="Settings.BanIPTimespan" type="text" />
+                        </div>
+                        <span class="input-group-addon">分钟，拦截次数达到</span>
+                        <div class="fg-line">
+                            <input class="form-control" ng-model="Settings.LimitIPInterceptTimes" type="text" />
+                        </div>
+                        <span class="input-group-addon">次，上报防火墙永久冻结该IP。</span>
+                    </div>
                 </div>
-                <span class="input-group-btn">
-                    <button class="btn btn-primary" ng-click="save()" type="button">保存配置</button>
-                </span>
+                <div class="col-md-12">
+                    <div class="input-group">
+                        <span class="input-group-addon">受限制的地区或运营商：</span>
+                        <div class="fg-line">
+                            <input class="form-control" ng-model="Settings.DenyArea" placeholder="禁止访问的地区，逗号分隔,如：江苏,苏州,移动,AS2333,DMIT，支持地区、运营商、ASN、机房名称" type="text" />
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-12">
+                    <div class="input-group">
+                        <span class="input-group-addon">受限制提示语：</span>
+                        <div class="fg-line">
+                            <textarea class="form-control" ng-model="Settings.AccessDenyTips" placeholder="基于主观因素考虑，您所在的地区暂时不允许访问本站，如有疑问，请联系站长！或者请联系站长开通本站的访问权限！" rows="4"></textarea>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-12">
+                    <div class="input-group">
+                        <span class="input-group-addon">UA标识限制：</span>
+                        <div class="fg-line">
+                            <input class="form-control" ng-model="Settings.UserAgentBlocked" placeholder="禁止的UserAgent，逗号分隔(MicroMessenger,QQ)" type="text" />
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-12">
+                    <div class="input-group">
+                        <span class="input-group-addon">UA限制提示语：</span>
+                        <div class="fg-line">
+                            <textarea class="form-control" ng-model="Settings.UserAgentBlockedMsg" placeholder="当前浏览器不支持访问本站" rows="4"></textarea>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
@@ -64,45 +103,53 @@
                 <a data-microtip="查看{{row.IP}}的详细信息" data-microtip-position="bottom" ng-href="/tools/ip?ip={{row.IP}}" style="font-size: 20px;" target="_blank">{{row.IP}}</a>
                 <button class="badge btn btn-primary pull-right" ng-click="addToWhiteList(row.IP)">添加到白名单</button>
             </td>
-            <td filter="{RequestUrl: 'text'}" sortable="'RequestUrl'" title="'请求URL'">
-                <a ng-href="{{row.RequestUrl}}" target="_blank">{{row.RequestUrl}}</a>
-            </td>
-            <td filter="{Address: 'text'}" sortable="'Address'" title="'地理位置'">
+            <td filter="{Address: 'text'}" title="'IP地理位置'">
                 {{row.Address}}
             </td>
-            <td sortable="'Time'" title="'拦截时间'">
+            <td filter="{RequestUrl: 'text'}" title="'请求URL'">
+                <a ng-href="{{row.RequestUrl}}" target="_blank">{{row.RequestUrl}}</a>
+            </td>
+            <td filter="{UserAgent: 'text'}" title="'UserAgent'">
+                {{row.UserAgent}}
+            </td>
+            <td title="'拦截时间'">
                 {{row.Time|date:'yyyy-MM-dd HH:mm:ss'}}
+            </td>
+            <td filter="{Remark: 'text'}" title="'备注'">
+                {{row.Remark}}
             </td>
         </tr>
     </table>
 </div>
-<div class="modal" id="modal">
-    <div class="container-fluid" style="margin: 15px 0;">
-        <div class="input-group">
-            <span class="input-group-addon">限制地区：</span>
-            <div class="dropdown fluid region search selection ui">
-                <input id="region" name="region" type="hidden">
-                <i class="dropdown icon"></i>
-                <div class="default text">请选择地区</div>
-                <div class="menu">
-                    <div class="item" data-value="{{item}}" ng-repeat="item in Areas track by $index">{{item}}</div>
-                </div>
-            </div>
-        </div>
-        <div class="input-group">
-            <span class="input-group-addon">搜索 IP ：</span>
-            <div class="fg-line">
-                <input class="form-control" placeholder="114.114.114.114" type="text" ng-model="ip" ng-change="searchIP(ip)"/>
-            </div>
-        </div>
-        <div ng-if="AreaIPs.length<=0" class="text-center">
-            <p class="text-danger size18">暂无记录</p>
-        </div>
-        <ul class="iplist list-group">
-            <li class="list-group-item" ng-repeat="item in AreaIPs track by $index">
-                <a ng-href="/tools/ip?ip={{item}}" target="_blank" data-microtip="查看{{item}}的详细信息" data-microtip-position="bottom">{{item}}</a>
-                <button class="badge btn btn-primary" ng-click="addToWhiteList(item)">添加到白名单</button>
-            </li>
-        </ul>
+<div ng-if="ranking.length>0">
+    <div class="page-header">
+        <h3 class="text-center">拦截次数排行榜</h3>
     </div>
+    <table class="table table-bordered table-condensed table-responsive">
+        <thead>
+            <tr>
+                <th>序号</th>
+                <th>IP</th>
+                <th>次数</th>
+                <th>地理位置</th>
+                <th>拦截开始时间</th>
+                <th>拦截截止时间</th>
+                <th>持续时长</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr ng-repeat="item in ranking">
+                <td>{{$index+1}}</td>
+                <td>
+                    <a ng-href="http://ip.bczs.net/{{item.Key}}" target="_blank">{{item.Key}}</a>
+                    <button class="badge btn btn-primary pull-right" ng-click="addToBlackList(item.Key)">添加到黑名单</button>
+                </td>
+                <td>{{item.Count}}</td>
+                <td>{{item.Address}}</td>
+                <td>{{item.Start|date:'yyyy-MM-dd HH:mm:ss'}}</td>
+                <td>{{item.End|date:'yyyy-MM-dd HH:mm:ss'}}</td>
+                <td>{{item.Continue}}</td>
+            </tr>
+        </tbody>
+    </table>
 </div>

@@ -1,30 +1,43 @@
-﻿@using System.Text.RegularExpressions
-@using System.Web
-@using Common
+﻿@using System.Diagnostics
+@using Masuit.MyBlogs.Core.Common
 @using Masuit.MyBlogs.Core.Models.Entity
-@using Masuit.MyBlogs.Core.Extensions
-@using Masuit.Tools.Win32
+@using Masuit.MyBlogs.Core.Models.ViewModel
+@using Masuit.Tools.Core.Net
 @model Masuit.MyBlogs.Core.Models.Entity.PostHistoryVersion
 @{
-    ViewBag.Title = Model.Post.Title + "于" + Model.ModifyDate.ToString("yyyy-MM-dd HH:mm:ss") + "的历史版本：" + Model.Title;
+    ViewBag.Title = Model.Post.Title + "于" + Model.ModifyDate.ToTimeZoneF(Context.Session.Get<string>(SessionKey.TimeZone)) + "的历史版本：" + Model.Title;
     Layout = "~/Views/Shared/_Layout.cshtml";
     string[] colors = { "success", "info", "primary", "warning", "danger", "default", "primary" };
+    Advertisement ad = ViewBag.Ads;
 }
-<link href="~/Assets/jquery.tocify/jquery.tocify.min.css" rel="stylesheet" />
-<link href="~/Assets/UEditor/third-party/SyntaxHighlighter/styles/shCore.min.css" rel="stylesheet" />
+<environment names="Development">
+    <link href="~/Assets/jquery.tocify/jquery.tocify.min.css" rel="stylesheet" />
+    <link href="~/Assets/UEditor/third-party/SyntaxHighlighter/styles/shCore.min.css" rel="stylesheet" />
+    <link href="~/Assets/highlight/css/highlight.css" rel="stylesheet" />
+    <script src="/Assets/highlight/js/highlight.js"></script>
+    <script src="/Assets/UEditor/third-party/SyntaxHighlighter/scripts/shCore.min.js"></script>
+    <script src="/Assets/UEditor/third-party/SyntaxHighlighter/scripts/bundle.min.js"></script>
+    <script src="/Assets/jquery.tocify/jquery.tocify.js"></script>
+    <script src="/Scripts/global/article.js"></script>
+    <script src="/Assets/highlight/js/highlight.js"></script>
+</environment>
+<environment names="Stage,Production">
+    @await Styles.RenderAsync("/bundles/article.css")
+    @await Scripts.RenderAsync("/bundles/article.js")
+</environment>
 <div class="container">
     <ol class="cd-breadcrumb triangle">
-        <li>@Html.ActionLink("首页", "Index", "Home")</li>
-        <li>@Html.ActionLink("文章列表", "Post", "Home")</li>
+        <li><a asp-controller="Home" asp-action="Index">首页</a></li>
+        <li><a asp-controller="Home" asp-action="Post">文章列表</a></li>
         <li>@Html.ActionLink(Model.Post.Title.Length > 20 ? Model.Post.Title.Substring(0, 20) + "..." : Model.Post.Title, "Details", "Post", new { id = Model.PostId }, null)</li>
-        <li>@Html.ActionLink("历史版本", "History", "Post", new { id = Model.PostId }, null)</li>
-        <li class="current"><em>@(Model.Title.Length > 40 ? Model.Title.Substring(0, 40) + "..." : Model.Title)</em></li>
+        <li><a asp-controller="Post" asp-action="History" asp-route-id="@Model.PostId">历史版本</a></li>
+        <li class="current"><em>@(Model.Title.Length > 35 ? Model.Title.Substring(0, 35) + "..." : Model.Title)</em></li>
     </ol>
     <div class="wrapper-content article">
         <div class="ibox">
             <div class="ibox-content animated fadeIn">
                 <main>
-                    <section>
+                    <section class="history article-content">
                         <header class="page-header">
                             <div class="text-center">
                                 <a>
@@ -36,15 +49,15 @@
                             <div class="row">
                                 <div class="col-sm-7">
                                     <div class="padding-bot10">
-                                        修改于<span class="text-success">@Model.ModifyDate.ToString("yyyy-MM-dd HH:mm:ss")</span> |
-                                        原分类：<i class="icon-map-pin"></i>@Html.ActionLink(Model.Category.Name, "Category", "Home", new { id = Model.CategoryId }, new { @class = "label label-" + colors[new Random().StrictNext() % colors.Length] })
+                                        <span class="label label-@colors[new Random().Next() % colors.Length]">@Model.Modifier</span>修改于<span class="text-success">@Model.ModifyDate.ToTimeZoneF(Context.Session.Get<string>(SessionKey.TimeZone))</span> |
+                                        原分类：<i class="icon-map-pin"></i><a asp-controller="Home" asp-action="Category" asp-route-id="@Model.CategoryId" class="label label-@colors[new Random().Next() % colors.Length]">@Model.Category.Name</a>
                                         @if (Model.Seminar.Any())
                                         {
                                             <span> | 原所属专题：</span>
                                             var seminars = Model.Seminar;
                                             foreach (var s in seminars)
                                             {
-                                                @Html.ActionLink(s.Seminar.Title, "Index", "Seminar", new { id = s.SeminarId }, new { @class = "label label-" + colors[new Random().StrictNext() % colors.Length] })<text> </text>
+                                                <a asp-controller="Seminar" asp-action="Index" asp-route-id="@s.SeminarId" class="label label-@colors[new Random().Next() % colors.Length]">@s.Seminar.Title</a><text> </text>
                                             }
                                         }
                                     </div>
@@ -58,8 +71,8 @@
                                                 {
                                                     if (!string.IsNullOrEmpty(s))
                                                     {
-                                                        <a href="/tag/@HttpUtility.UrlEncode(s)">
-                                                            <span class="label label-@colors[new Random().StrictNext() % colors.Length]">@s</span>
+                                                        <a asp-controller="Home" asp-action="Tag" asp-route-id="@s">
+                                                            <span class="label label-@colors[new Random().Next() % colors.Length]">@s</span>
                                                         </a>
                                                     }
                                                 }
@@ -68,13 +81,14 @@
                                     }
                                 }
                             </div>
+                            <p class="text-focus text-center">您目前正在查看该文章的历史版本，文章的历史版本可能无法为您提供最准确及时的资讯，不具备任何参考价值，<a asp-controller="Post" asp-action="Details" asp-route-id="@Model.PostId">点击前往</a>该文章的最新版本。</p>
                         </header>
                         <article class="article" id="article">
-                            @Html.Raw(Regex.Replace(Model.Content, @"<img\s+[^>]*\s*src\s*=\s*['""]?(\S+\.\w{3,4})['""]?[^/>]*/>", $"<img data-original=\"$1\" alt='{CommonHelper.SystemSettings["Title"]}' title='{CommonHelper.SystemSettings["Title"]}'/>"))
+                            @Html.Raw(Model.Content.ReplaceImgAttribute(Model.Title))
                             @if (!string.IsNullOrEmpty(Model.ProtectContent))
                             {
                                 <div class="row protected">
-                                    @if (string.IsNullOrEmpty(Context.Session.GetByRedis<string>("ArticleViewToken")))
+                                    @if (string.IsNullOrEmpty(Context.Session.Get<string>("AccessViewToken")) && !string.IsNullOrEmpty(Model.Post.ProtectContent))
                                     {
                                         <p class="text-red text-center size24 margin-bot10">↓↓↓恭喜你发现镇站之宝，请注意，前方高能！非战斗人员请及时撤离，这不是演习！↓↓↓</p>
                                         <div class="col-md-6">
@@ -110,7 +124,7 @@
                                     else
                                     {
                                         <p class="text-red text-center size20">↓↓↓以下是文章加密部分↓↓↓</p>
-                                        @Html.Raw(Regex.Replace(Model.ProtectContent, @"<img\s+[^>]*\s*src\s*=\s*['""]?(\S+\.\w{3,4})['""]?[^/>]*/>", $"<img data-original=\"$1\" alt='{CommonHelper.SystemSettings["Title"]}' title='{CommonHelper.SystemSettings["Title"]}'/>"))
+                                        @Html.Raw(Model.ProtectContent.ReplaceImgAttribute(Model.Title))
                                     }
                                 </div>
                             }
@@ -126,7 +140,7 @@
                             PostHistoryVersion prev = ViewBag.Prev;
                             if (prev != null)
                             {
-                                @Html.ActionLink(prev.Title, "HistoryVersion", "Post", new { id = prev.PostId, hid = prev.Id }, null)
+                                <a asp-controller="Post" asp-action="HistoryVersion" asp-route-id="@prev.PostId" asp-route-hid="@prev.Id">@prev.Title</a>
                             }
                             else
                             {
@@ -140,7 +154,7 @@
                             PostHistoryVersion next = ViewBag.Next;
                             if (next != null)
                             {
-                                @Html.ActionLink(next.Title, "HistoryVersion", "Post", new { id = next.PostId, hid = next.Id }, null)
+                                <a asp-controller="Post" asp-action="HistoryVersion" asp-route-id="@next.PostId" asp-route-hid="@next.Id">@next.Title</a>
                             }
                             else
                             {
@@ -149,57 +163,48 @@
                         }
                     </div>
                 </section>
-                <!--PC和WAP自适应版-->
-                <div id="SOHUCS" sid="history-@Model.Id"></div>
-                <script type="text/javascript">
-                    (function () {
-                        var appid = 'cytsT3QgK';
-                        var conf = 'prod_0358240040a6c9611add9de991099d42';
-                        var width = window.innerWidth || document.documentElement.clientWidth;
-                        if (width < 960) {
-                            window.document.write(
-                                '<script id="changyan_mobile_js" charset="utf-8" type="text/javascript" src="https://changyan.sohu.com/upload/mobile/wap-js/changyan_mobile.js?client_id=' +
-                                appid + '&conf=' + conf + '"><\/script>');
-                        } else {
-                            var loadJs = function (d, a) {
-                                var c = document.getElementsByTagName("head")[0] || document.head || document.documentElement;
-                                var b = document.createElement("script");
-                                b.setAttribute("type", "text/javascript");
-                                b.setAttribute("charset", "UTF-8");
-                                b.setAttribute("src", d);
-                                if (typeof a === "function") {
-                                    if (window.attachEvent) {
-                                        b.onreadystatechange = function () {
-                                            var e = b.readyState;
-                                            if (e === "loaded" || e === "complete") {
-                                                b.onreadystatechange = null;
-                                                a()
-                                            }
-                                        }
-                                    } else {
-                                        b.onload = a
+                @if (ad != null)
+                {
+                    <section class="protected">
+                        <a asp-controller="Advertisement" asp-action="Redirect" asp-route-id="@ad.Id" target="_blank" id="@Stopwatch.GetTimestamp()">
+                            <h3>
+                                @ad.Title
+                                <span class="text-red">[推广]</span>
+                            </h3>
+
+                            <div class="row padding-bot10">
+                                @{
+                                    string imgSrc = ad.ThumbImgUrl;
+                                    if (!string.IsNullOrEmpty(imgSrc))
+                                    {
+                                        <div class="col-md-3">
+                                            <img class="img-thumbnail img-responsive thumb" data-original="@imgSrc" alt="@ad.Title" title="@ad.Title ">
+                                        </div>
                                     }
                                 }
-                                c.appendChild(b)
-                            };
-                            loadJs("https://changyan.sohu.com/upload/changyan.js", function () {
-                                window.changyan.api.config({
-                                    appid: appid,
-                                    conf: conf
-                                })
-                            });
-                        }
-                    })();
-                </script>
+                                <div class="col-md-@(string.IsNullOrEmpty(imgSrc) ? 12 : 9)">
+                                    <p>
+                                        @ad.Description
+                                    </p>
+                                </div>
+                            </div>
+                        </a>
+                    </section>
+                }
             </div>
         </div>
     </div>
 </div>
-<script src="~/Assets/UEditor/third-party/SyntaxHighlighter/scripts/shCore.min.js"></script>
-<script src="~/Assets/UEditor/third-party/SyntaxHighlighter/scripts/bundle.min.js"></script>
-<script src="~/Assets/jquery.tocify/jquery.tocify.js"></script>
+<noscript>
+    <iframe src="*.htm"></iframe>
+</noscript>
 <script>
     $(function () {
+        @if(Model.Post.DisableCopy) {
+            <text>
+        GlobalCopyrightProtect();
+            </text>
+        }
         $("#toc").show();
         var toc = $("#toc").tocify({
             selectors: ".ibox-content h3,.ibox-content h4,.ibox-content h5"
